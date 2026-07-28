@@ -39,15 +39,16 @@ https://vapi-appointment-reminders.streamlit.app
 
 ---
 
-## Architecture
-mermaid
+## Workflow
+
+```mermaid
 flowchart TD
     A[Patient Database] --> B[Streamlit App]
     B --> C[Vapi API]
     C --> D[AI Phone Call]
     D --> E[Process Response]
-    E --> F[Call Attempts Database]## Workflow
-
+    E --> F[Call Attempts Database]
+```
 ### 1. Select Patient
 
 The operator selects a patient from the Streamlit interface.
