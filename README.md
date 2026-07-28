@@ -41,18 +41,12 @@ https://vapi-appointment-reminders.streamlit.app
 
 ## Architecture
 
-```mermaid
 flowchart TD
-    A[Patient Database] --> B[Streamlit Operator Interface]
+    A[Patient Database] --> B[Streamlit App]
     B --> C[Vapi API]
     C --> D[AI Phone Call]
-    D --> E[Response Processing]
-    E --> F[Call Attempts Database]
-```
-
----
-
-## Workflow
+    D --> E[Process Response]
+    E --> F[Call Attempts Database]## Workflow
 
 ### 1. Select Patient
 
