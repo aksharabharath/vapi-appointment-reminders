@@ -40,7 +40,7 @@ https://vapi-appointment-reminders.streamlit.app
 ---
 
 ## Architecture
-
+mermaid
 flowchart TD
     A[Patient Database] --> B[Streamlit App]
     B --> C[Vapi API]
