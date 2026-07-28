@@ -6,19 +6,33 @@ Connects to patients.db and executes calls via VapiCallHandler.
 import os
 import sqlite3
 import streamlit as st
-# Import your existing Vapi handler and helpers from vapi_call_automation
 from vapi_call_automation import VapiCallHandler, get_patient_from_db, log_call_attempt
 
 DB_FILE = "patients.db"
 
+
 # ==========================================
 # SAFE CREDENTIAL LOADING
 # ==========================================
-# Fetch keys from Streamlit Secrets (for Cloud) or Environment Variables (for Local)
-VAPI_API_KEY = st.secrets.get("VAPI_API_KEY") or os.getenv("VAPI_API_KEY", "")
-VAPI_PHONE_NUMBER_ID = st.secrets.get("VAPI_PHONE_NUMBER_ID") or os.getenv(
-    "VAPI_PHONE_NUMBER_ID", ""
-)
+def get_secret(key_name: str) -> str:
+    """Safely fetch secrets from st.secrets (Streamlit Cloud) or os.getenv (Local)."""
+    try:
+        if key_name in st.secrets:
+            return st.secrets[key_name]
+    except Exception:
+        pass
+    return os.getenv(key_name, "")
+
+
+VAPI_API_KEY = get_secret("VAPI_API_KEY")
+VAPI_PHONE_NUMBER_ID = get_secret("VAPI_PHONE_NUMBER_ID")
+
+if not VAPI_API_KEY or not VAPI_PHONE_NUMBER_ID:
+    st.error(
+        "❌ API Credentials missing! Please configure VAPI_API_KEY and VAPI_PHONE_NUMBER_ID."
+    )
+    st.stop()
+
 
 # Halt execution gracefully if credentials aren't configured
 if not VAPI_API_KEY or not VAPI_PHONE_NUMBER_ID:

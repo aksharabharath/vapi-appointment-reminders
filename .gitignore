@@ -1,7 +1,4 @@
-# Ignore sensitive keys and secrets
-.env
 .streamlit/secrets.toml
-
-# Ignore temporary Python bytecode
+.env
 __pycache__/
 *.pyc
