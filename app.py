@@ -34,12 +34,6 @@ if not VAPI_API_KEY or not VAPI_PHONE_NUMBER_ID:
     st.stop()
 
 
-# Halt execution gracefully if credentials aren't configured
-if not VAPI_API_KEY or not VAPI_PHONE_NUMBER_ID:
-    st.error(
-        "❌ API Credentials missing! Please set VAPI_API_KEY and VAPI_PHONE_NUMBER_ID in Streamlit Secrets."
-    )
-    st.stop()
 
 # ==========================================
 # PAGE CONFIGURATION
@@ -120,11 +114,6 @@ with col2:
 st.divider()
 
 
-if not VAPI_API_KEY or not VAPI_PHONE_NUMBER_ID:
-    st.error(
-        "API Credentials missing! Please set VAPI_API_KEY and VAPI_PHONE_NUMBER_ID in Streamlit Secrets."
-    )
-    st.stop()
 
 if st.button("🚀 Start Automated Call", type="primary", use_container_width=True):
     handler = VapiCallHandler(VAPI_API_KEY, VAPI_PHONE_NUMBER_ID)
