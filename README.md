@@ -42,22 +42,15 @@ https://vapi-appointment-reminders.streamlit.app
 ## Workflow
 
 ```
-Patient Database
-        |
-        v
+Patient Record
+      ↓
 Streamlit App
-        |
-        v
-Vapi API
-        |
-        v
-AI Phone Call
-        |
-        v
-Process Patient Response
-        |
-        v
-Call Attempts Database
+      ↓
+Vapi AI Call
+      ↓
+Patient Response
+      ↓
+Save Call Result
 ```
 
 ### 1. Select Patient
