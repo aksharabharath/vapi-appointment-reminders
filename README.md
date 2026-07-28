@@ -24,7 +24,7 @@ Try the deployed Streamlit application:
 
 https://vapi-appointment-reminders.streamlit.app
 
-![AI Appointment Reminder Dashboard](images/dashboard.png)
+![AI Appointment Reminder Dashboard](dashboard.png)
 
 ---
 
