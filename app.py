@@ -1,18 +1,25 @@
-"""
-Streamlit UI for Vapi Appointment Reminder Automation
-Connects to patients.db and executes calls via VapiCallHandler.
-"""
-
 import os
-import sqlite3
 import streamlit as st
-from vapi_call_automation import VapiCallHandler, get_patient_from_db, log_call_attempt
 
-DB_FILE = "patients.db"
+# Import backend helper functions from vapi_call_automation
+from vapi_call_automation import (
+    get_all_patients,
+    get_call_history,
+    get_pending_patients,
+    process_batch_calls,
+    reset_all_patients_called_status,
+)
+
+# Set page layout and title
+st.set_page_config(
+    page_title="Batch Patient Reminder System",
+    page_icon="📞",
+    layout="wide",
+)
 
 
 # ==========================================
-# SAFE CREDENTIAL LOADING
+# 1. SAFE SECRETS / CREDENTIAL RETRIEVAL
 # ==========================================
 def get_secret(key_name: str) -> str:
     """Safely fetch secrets from st.secrets (Streamlit Cloud) or os.getenv (Local)."""
@@ -27,156 +34,165 @@ def get_secret(key_name: str) -> str:
 VAPI_API_KEY = get_secret("VAPI_API_KEY")
 VAPI_PHONE_NUMBER_ID = get_secret("VAPI_PHONE_NUMBER_ID")
 
+
+# ==========================================
+# 2. MAIN APP LAYOUT & HEADER
+# ==========================================
+st.title("📞 Batch AI Appointment Reminder System")
+st.caption(
+    "Automated outbound voice assistant powered by Vapi, Streamlit, and SQLite"
+)
+
+# API Key Validation Banner
 if not VAPI_API_KEY or not VAPI_PHONE_NUMBER_ID:
     st.error(
-        "❌ API Credentials missing! Please configure VAPI_API_KEY and VAPI_PHONE_NUMBER_ID."
+        "❌ **API Credentials missing!** Please configure `VAPI_API_KEY` and `VAPI_PHONE_NUMBER_ID` in Streamlit Secrets or `.env`."
     )
     st.stop()
 
+# Retrieve current DB state
+pending_patients = get_pending_patients()
+all_patients = get_all_patients()
+call_history = get_call_history()
+
+pending_count = len(pending_patients)
+total_count = len(all_patients)
+called_count = total_count - pending_count
 
 
-# ==========================================
-# PAGE CONFIGURATION
-# ==========================================
-st.set_page_config(page_title="Appointment Call Manager", page_icon="📞", layout="centered")
-
-st.title("📞 Patient Appointment Call Manager")
-st.markdown("Select a patient from the database, trigger an automated voice reminder, and track responses.")
-
-st.divider()
-
-# ==========================================
-# 1. FETCH ALL PATIENTS FROM DATABASE
-# ==========================================
-def get_all_patients():
-    """Fetch list of all patients for the dropdown selection."""
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT patient_id, first_name, last_name, phone_number, appointment_date, appointment_time FROM patients")
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-def get_call_history():
-    """Fetch full history of call attempts with separate first and last name columns."""
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT 
-            c.call_attempt_id AS "Attempt ID",
-            p.first_name AS "First Name",
-            p.last_name AS "Last Name",
-            c.status AS "Call Status",
-            c.decision AS "Outcome",
-            c.user_speech AS "Spoken Response",
-            c.created_at AS "Timestamp"
-        FROM call_attempts c
-        JOIN patients p ON c.patient_id = p.patient_id
-        ORDER BY c.call_attempt_id DESC
-    """)
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-# ==========================================
-# 2. PATIENT SELECTION & DETAILS CARD
-# ==========================================
-patients = get_all_patients()
-
-if not patients:
-    st.error("No patients found in patients.db! Make sure patients.db is initialized.")
-    st.stop()
-
-# Dropdown for selecting a patient
-patient_options = {f"{p['first_name']} {p['last_name']} ({p['patient_id']})": p['patient_id'] for p in patients}
-selected_label = st.selectbox("Select Patient to Call:", list(patient_options.keys()))
-selected_patient_id = patient_options[selected_label]
-
-# Fetch full record for selected patient
-patient_data = get_patient_from_db(selected_patient_id)
-
-# Display Patient Details Card
-col1, col2 = st.columns(2)
-with col1:
-    st.subheader("👤 Patient Identity")
-    st.write(f"**Name:** {patient_data['firstName']} {patient_data['lastName']}")
-    st.write(f"**Phone:** `{patient_data['phoneNumber']}`")
-    st.write(f"**DOB:** {patient_data.get('dateOfBirth', 'N/A')}")
-
-with col2:
-    st.subheader("📅 Appointment Info")
-    st.write(f"**Date:** {patient_data['appointmentDate']}")
-    st.write(f"**Time:** {patient_data['appointmentTime']}")
-    st.write(f"**Timezone:** {patient_data.get('timezone', 'N/A')}")
+# Metrics Summary Bar
+m1, m2, m3 = st.columns(3)
+m1.metric("Pending Calls", pending_count, delta_color="normal")
+m2.metric("Already Called", called_count)
+m3.metric("Total Patients in Roster", total_count)
 
 st.divider()
 
 
+# ==========================================
+# 3. SIDEBAR UTILITIES
+# ==========================================
+with st.sidebar:
+    st.header("⚙️ Admin Controls")
+    st.markdown("Use this utility to reset all patient call statuses for testing.")
 
-if st.button("🚀 Start Automated Call", type="primary", use_container_width=True):
-    handler = VapiCallHandler(VAPI_API_KEY, VAPI_PHONE_NUMBER_ID)
+    if st.button("🔄 Reset All Patients to 'Uncalled'", use_container_width=True):
+        reset_all_patients_called_status()
+        st.success("All patient records set to `called_yet = False`!")
+        st.rerun()
 
-    with st.status("Initiating outbound voice call...", expanded=True) as status_box:
-        try:
-            # Step A: Place Call
-            st.write(f"📞 Dialing **{patient_data['phoneNumber']}**...")
-            call_response = handler.make_call(patient_data)
-            call_id = call_response.get("id")
+    st.markdown("---")
+    st.markdown("### System Specs")
+    st.write(f"**Database:** `patients.db` (SQLite)")
+    st.write(f"**Voice Model:** OpenAI `gpt-4o-mini`")
+    st.write(f"**Transcription:** Deepgram `nova-3`")
 
-            if not call_id:
-                st.error("Failed to initiate call. No Call ID returned.")
-                st.stop()
-
-            st.write(f"✅ Call Placed. **Call ID:** `{call_id}`")
-            st.write("⏳ Waiting for patient response and call completion...")
-
-            # Step B: Wait for Call Completion
-            call_data = handler.wait_for_call_completion(call_id, max_wait_seconds=120)
-
-            if call_data is None:
-                st.error("Call timed out or status check failed.")
-                st.stop()
-
-            # Step C: Extract Response
-            result = handler.extract_response(call_data)
-
-            # Step D: Log to Database
-            log_call_attempt(
-                patient_id=patient_data["id"],
-                vapi_call_id=call_id,
-                status=result["status"],
-                decision=result["decision"],
-                user_speech=result["raw_speech"],
-            )
-
-            status_box.update(label="Call Complete!", state="complete", expanded=False)
-
-            # Display Call Outcome Summary
-            st.success(f"**Call Status:** {result['status'].upper()}")
-            
-            if result["decision"] == "CONFIRMED":
-                st.balloons()
-                st.success(f"🎉 **Patient Decision:** CONFIRMED (Spoke: '{result['raw_speech']}')")
-            elif result["decision"] == "RESCHEDULE":
-                st.warning(f"🔄 **Patient Decision:** RESCHEDULE REQUESTED (Spoke: '{result['raw_speech']}')")
-            else:
-                st.info(f"❓ **Patient Decision:** {result['decision']} (Spoke: '{result['raw_speech']}')")
-
-        except Exception as e:
-            status_box.update(label="Call Failed", state="error")
-            st.error(f"Error during execution: {e}")
-
-st.divider()
 
 # ==========================================
-# 4. CALL HISTORY TABLE
+# 4. BATCH CALL EXECUTION SECTION
 # ==========================================
-st.subheader("📊 Recent Call Attempts History")
-history = get_call_history()
+st.subheader("🚀 Batch Call Trigger")
 
-if history:
-    st.dataframe(history, use_container_width=True)
+if pending_count == 0:
+    st.info(
+        "🎉 **All patients have already been called!** Click 'Reset All Patients' in the sidebar if you want to re-run a batch test."
+    )
 else:
-    st.info("No call attempts logged yet. Click 'Start Automated Call' above to make your first attempt.")
+    st.write(
+        f"Click below to initiate automated voice reminder calls for all **{pending_count} pending patient(s)**."
+    )
+
+    # Batch Call Button
+    if st.button(
+        f"📞 Call All {pending_count} Pending Patients",
+        type="primary",
+        use_container_width=True,
+    ):
+        progress_bar = st.progress(0, text="Initializing batch calling...")
+        status_box = st.empty()
+
+        # Define progress update callback for Streamlit UI
+        def update_ui_progress(current_idx: int, total: int, message: str):
+            percent = int((current_idx / total) * 100)
+            progress_bar.progress(percent, text=message)
+            status_box.info(f"⏳ **Processing:** {message}")
+
+        # Execute Batch Call Loop
+        summary = process_batch_calls(
+            api_key=VAPI_API_KEY,
+            phone_number_id=VAPI_PHONE_NUMBER_ID,
+            progress_callback=update_ui_progress,
+        )
+
+        progress_bar.progress(100, text="Batch processing complete!")
+        status_box.success(
+            f"✅ **Batch Complete!** Executed {summary['successful']} call(s) successfully out of {summary['total']} pending."
+        )
+
+        # Pause briefly and refresh UI to update data tables
+        st.rerun()
+
+st.divider()
+
+
+# ==========================================
+# 5. DATA TABLES & MONITORING
+# ==========================================
+tab1, tab2, tab3 = st.tabs([
+    "📋 Pending Queue",
+    "👥 Full Patient Roster",
+    "📊 Call Attempts Audit History",
+])
+
+# TAB 1: PENDING PATIENTS QUEUE
+with tab1:
+    st.subheader("Patients Pending Calls (`called_yet = False`)")
+    if pending_count == 0:
+        st.write("No patients currently waiting for calls.")
+    else:
+        # Display formatted table of pending patients
+        formatted_pending = []
+        for p in pending_patients:
+            formatted_pending.append({
+                "ID": p["patient_id"],
+                "Name": f"{p['first_name']} {p['last_name']}",
+                "Phone": p["phone_number"],
+                "Appointment Date": p["appointment_date"],
+                "Appointment Time": p["appointment_time"],
+                "Status": "⏳ Pending Call",
+            })
+        st.dataframe(formatted_pending, use_container_width=True)
+
+# TAB 2: FULL PATIENT ROSTER
+with tab2:
+    st.subheader("Complete Patient Registry")
+    formatted_roster = []
+    for p in all_patients:
+        is_called = bool(p.get("called_yet"))
+        formatted_roster.append({
+            "ID": p["patient_id"],
+            "Name": f"{p['first_name']} {p['last_name']}",
+            "Phone": p["phone_number"],
+            "Appointment Date": p["appointment_date"],
+            "Appointment Time": p["appointment_time"],
+            "Called Yet?": "✅ True" if is_called else "❌ False",
+        })
+    st.dataframe(formatted_roster, use_container_width=True)
+
+# TAB 3: CALL ATTEMPTS HISTORY
+with tab3:
+    st.subheader("Logged Interaction History (`call_attempts`)")
+    if not call_history:
+        st.write("No calls logged yet.")
+    else:
+        formatted_history = []
+        for h in call_history:
+            formatted_history.append({
+                "Attempt ID": h["call_attempt_id"],
+                "Patient Name": f"{h['first_name']} {h['last_name']}",
+                "Status": h["status"],
+                "Decision": h["decision"],
+                "Transcript / Response": h["user_speech"],
+                "Timestamp": h["created_at"],
+            })
+        st.dataframe(formatted_history, use_container_width=True)
