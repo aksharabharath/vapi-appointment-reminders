@@ -161,28 +161,42 @@ def trigger_vapi_outbound_call(
     }
 
     patient_name = f"{patient['first_name']} {patient['last_name']}"
+    first_name = patient["first_name"]
     appt_date = patient["appointment_date"]
     appt_time = patient["appointment_time"]
 
-    # Prompt constructed dynamically with patient variables
+    # Updated system prompt that waits for user response before ending
     prompt_text = (
-        f"You are calling {patient_name} to confirm their upcoming appointment on "
-        f"{appt_date} at {appt_time}. Ask them to say 1 to confirm or say 2 to reschedule. "
-        "Keep responses friendly, polite, and concise. Once they respond, acknowledge their answer "
-        "and immediately hang up the call using the endCall tool."
+        f"You are calling {patient_name} to remind them about their appointment on "
+        f"{appt_date} at {appt_time}.\n\n"
+        "STEPS TO FOLLOW:\n"
+        "1. Do not greet them again (the initial message already greeted them).\n"
+        "2. Listen for their response.\n"
+        "3. If they say 1 or confirm: Say 'Thank you! Your appointment is confirmed. Goodbye!' and end the conversation.\n"
+        "4. If they say 2 or want to reschedule: Say 'Thank you! A staff member will follow up to reschedule. Goodbye!' and end the conversation.\n"
+        "5. Keep responses extremely short (under 15 words)."
     )
 
     payload = {
         "phoneNumberId": phone_number_id,
         "customer": {"number": patient["phone_number"]},
         "assistant": {
-            "firstMessage": f"Hello {patient['first_name']}, this is an automated reminder for your appointment on {appt_date} at {appt_time}. Say 1 to confirm, or say 2 to reschedule.",
+            "firstMessage": f"Hello {first_name}, this is an automated reminder for your appointment on {appt_date} at {appt_time}. Please say 1 to confirm, or say 2 to reschedule.",
             "model": {
                 "provider": "openai",
                 "model": "gpt-4o-mini",
                 "messages": [{"role": "system", "content": prompt_text}],
+                "temperature": 0.3,
             },
             "voice": {"provider": "playht", "voiceId": "jennifer"},
+            "endCallPhrases": [
+                "Goodbye!",
+                "Have a great day!",
+                "Your appointment is confirmed. Goodbye!",
+                "A staff member will follow up to reschedule. Goodbye!",
+            ],
+            "silenceTimeoutSeconds": 20,
+            "maxDurationSeconds": 120,
         },
     }
 
@@ -197,7 +211,6 @@ def trigger_vapi_outbound_call(
     except Exception as e:
         print(f"Exception triggering Vapi call: {e}")
         return None
-
 
 def poll_vapi_call_status(
     vapi_call_id: str, api_key: str, max_attempts: int = 12, delay: int = 5
