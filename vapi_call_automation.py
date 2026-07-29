@@ -59,21 +59,15 @@ def format_date_for_speech(raw_date_str: str) -> str:
 
 
 def validate_patient_record(patient: Dict) -> Tuple[bool, List[str], str]:
-    """Validates patient record fields before initiating a Vapi phone call.
-
-    Returns:
-        (is_valid: bool, errors: List[str], formatted_e164_phone: str)
-    """
+    """Validates patient record fields before initiating a Vapi phone call."""
     errors = []
 
-    # 1. Validate First & Last Name
     first_name = str(patient.get("first_name", "") or "").strip()
     last_name = str(patient.get("last_name", "") or "").strip()
 
     if not first_name or not last_name:
         errors.append("Missing patient name (first or last name is blank).")
 
-    # 2. Validate Phone Number (E.164 compliance and digit length check)
     raw_phone = str(patient.get("phone_number", "") or "").strip()
     digits_only = re.sub(r"\D", "", raw_phone)
 
@@ -87,19 +81,15 @@ def validate_patient_record(patient: Dict) -> Tuple[bool, List[str], str]:
     else:
         if len(digits_only) == 10:
             formatted_phone = f"+1{digits_only}"
-        elif raw_phone.startswith("+"):
-            formatted_phone = f"+{digits_only}"
         else:
             formatted_phone = f"+{digits_only}"
 
-    # 3. Validate Appointment Date Format and Real Calendar Bounds
     raw_date = str(patient.get("appointment_date", "") or "").strip()
     if not raw_date:
         errors.append("Missing appointment date.")
     else:
         try:
             parsed_date = datetime.strptime(raw_date, "%Y-%m-%d")
-            # Ensure date isn't obviously in the past (prior to year 2020)
             if parsed_date.year < 2020:
                 errors.append(
                     f"Appointment date '{raw_date}' is invalid or far in the past."
@@ -109,7 +99,6 @@ def validate_patient_record(patient: Dict) -> Tuple[bool, List[str], str]:
                 f"Invalid date format '{raw_date}' (must be YYYY-MM-DD)."
             )
 
-    # 4. Validate Appointment Time
     raw_time = str(patient.get("appointment_time", "") or "").strip()
     if not raw_time:
         errors.append("Missing appointment time.")
@@ -289,7 +278,7 @@ def get_call_history() -> List[Dict]:
 
 
 # ==========================================
-# 2. VAPI API INTEGRATION & CALL EXECUTION
+# 2. VAPI API INTEGRATION & ENHANCED SYSTEM PROMPT
 # ==========================================
 
 
@@ -316,14 +305,25 @@ def trigger_vapi_outbound_call(
         or str(patient.get("phone_number", "")).strip()
     )
 
+    # PRIORITY 2: ENHANCED CONVERSATIONAL SYSTEM PROMPT & GUARDRAILS
     prompt_text = (
-        f"You are calling {patient_name} to confirm their appointment on {spoken_date} at {appt_time}.\n\n"
-        "INSTRUCTIONS FOR LIVE HUMAN:\n"
-        "1. Do NOT greet them again.\n"
-        "2. Listen for their numerical or verbal answer (1/confirm OR 2/reschedule).\n"
-        "3. If they say 1 or confirm: Say 'Thank you, your appointment is confirmed! Have a great day and goodbye!'\n"
-        "4. If they say 2 or reschedule: Say 'Thank you, our office team will contact you to reschedule. Have a great day and goodbye!'\n"
-        "5. Keep responses concise."
+        f"You are an AI appointment assistant calling on behalf of the Doctor's Office to reach {patient_name} "
+        f"regarding their scheduled appointment on {spoken_date} at {appt_time}.\n\n"
+        "STRICT CONVERSATIONAL GUARDRAILS & EDGE CASES:\n"
+        "1. HAPPY PATH (Confirm or Reschedule):\n"
+        "   - If they confirm (say '1', 'confirm', 'yes', 'I will be there'): Say 'Thank you, your appointment is confirmed! Have a great day and goodbye!'\n"
+        "   - If they ask to reschedule (say '2', 'reschedule', 'change time'): Say 'Thank you, our office team will contact you to reschedule. Have a great day and goodbye!'\n\n"
+        "2. WRONG NUMBER / WRONG PERSON:\n"
+        "   - If they say 'wrong number', 'he doesn't live here', or 'this isn't John': Say 'Thank you for letting me know. I will update our records. Have a great day and goodbye!'\n\n"
+        "3. IDENTITY / 'WHO IS THIS?':\n"
+        "   - If they ask 'Who is calling?' or 'Who is this?': Say 'I am an automated assistant calling from Doctor Office regarding an appointment for "
+        f"{first_name} on {spoken_date} at {appt_time}. Say 1 to confirm, or 2 to reschedule.'\n\n"
+        "4. AMBIGUOUS / UNCLEAR RESPONSES ('Maybe', 'Not sure', 'I think so'):\n"
+        "   - Re-prompt clearly: 'Just to confirm, please say 1 to confirm your appointment, or say 2 to request a reschedule.'\n\n"
+        "5. OUT-OF-SCOPE QUESTIONS & MEDICAL ADVICE:\n"
+        "   - If they ask medical questions, advice, weather, or unrelated topics: Say 'I am only able to assist with appointment confirmations today. "
+        "Would you like to confirm or reschedule your appointment?'\n\n"
+        "6. Keep all responses direct, concise, and professional."
     )
 
     payload = {
@@ -371,7 +371,7 @@ def trigger_vapi_outbound_call(
 def poll_vapi_call_status(
     vapi_call_id: str, api_key: str, max_attempts: int = 15, delay: int = 4
 ) -> Dict:
-    """Polls Vapi API and thoroughly extracts user speech from messages, transcript, or summary."""
+    """Polls Vapi API and thoroughly extracts user speech and classifies intent."""
     url = f"https://api.vapi.ai/call/{vapi_call_id}"
     headers = {"Authorization": f"Bearer {api_key}"}
 
@@ -408,10 +408,17 @@ def poll_vapi_call_status(
                     speech_lower = full_user_speech.lower()
                     decision = "NO_INPUT"
 
-                    if (
+                    # Classify conversation intent
+                    if any(
+                        w in speech_lower
+                        for w in ["wrong number", "wrong person", "don't live here", "not john", "not me"]
+                    ):
+                        decision = "WRONG_NUMBER"
+                    elif (
                         "1" in speech_lower
                         or "confirm" in speech_lower
                         or "yes" in speech_lower
+                        or "be there" in speech_lower
                     ):
                         decision = "CONFIRMED"
                     elif (
@@ -469,7 +476,10 @@ def process_batch_calls(
 
     for idx, patient in enumerate(pending_patients, start=1):
         patient_id = patient["patient_id"]
-        patient_name = f"{patient.get('first_name', '')} {patient.get('last_name', '')}".strip() or f"Patient #{patient_id}"
+        patient_name = (
+            f"{patient.get('first_name', '')} {patient.get('last_name', '')}".strip()
+            or f"Patient #{patient_id}"
+        )
 
         if progress_callback:
             progress_callback(
@@ -478,10 +488,10 @@ def process_batch_calls(
                 f"Validating & Processing {patient_name} ({idx}/{total_patients})...",
             )
 
-        # ---------------------------------------------------------
-        # PRE-CALL DATA VALIDATION CHECK
-        # ---------------------------------------------------------
-        is_valid, validation_errors, formatted_phone = validate_patient_record(patient)
+        # Pre-Call Data Validation Check
+        is_valid, validation_errors, formatted_phone = validate_patient_record(
+            patient
+        )
 
         if not is_valid:
             error_msg = f"Validation Failed: {'; '.join(validation_errors)}"
@@ -501,7 +511,6 @@ def process_batch_calls(
             })
             continue
 
-        # Trigger Vapi Call with formatted phone number
         vapi_call_id = trigger_vapi_outbound_call(
             patient, api_key, phone_number_id, formatted_phone=formatted_phone
         )
@@ -546,7 +555,6 @@ def process_batch_calls(
 
         time.sleep(2)
 
-    # Push updated SQLite database to GitHub
     auto_commit_db_to_git("Log batch call attempts and validation results")
 
     return {
