@@ -1,4 +1,4 @@
 streamlit
-vapi-python
+requests
 pytz
 python-dateutil
