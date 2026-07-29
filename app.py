@@ -1,16 +1,18 @@
 import os
 import streamlit as st
 
-# Import backend helper functions from vapi_call_automation
+# Import backend helper functions
 from vapi_call_automation import (
     get_all_patients,
     get_call_history,
     get_pending_patients,
+    get_pst_now_str,
+    is_daily_schedule_enabled,
     process_batch_calls,
     reset_all_patients_called_status,
+    set_daily_schedule_enabled,
 )
 
-# Set page layout and title
 st.set_page_config(
     page_title="Batch Patient Reminder System",
     page_icon="📞",
@@ -18,11 +20,7 @@ st.set_page_config(
 )
 
 
-# ==========================================
-# 1. SAFE SECRETS / CREDENTIAL RETRIEVAL
-# ==========================================
 def get_secret(key_name: str) -> str:
-    """Safely fetch secrets from st.secrets (Streamlit Cloud) or os.getenv (Local)."""
     try:
         if key_name in st.secrets:
             return st.secrets[key_name]
@@ -34,23 +32,17 @@ def get_secret(key_name: str) -> str:
 VAPI_API_KEY = get_secret("VAPI_API_KEY")
 VAPI_PHONE_NUMBER_ID = get_secret("VAPI_PHONE_NUMBER_ID")
 
-
-# ==========================================
-# 2. MAIN APP LAYOUT & HEADER
-# ==========================================
 st.title("📞 Batch AI Appointment Reminder System")
 st.caption(
-    "Automated outbound voice assistant powered by Vapi, Streamlit, and SQLite"
+    f"Automated outbound voice assistant | Current Time: **{get_pst_now_str()}**"
 )
 
-# API Key Validation Banner
 if not VAPI_API_KEY or not VAPI_PHONE_NUMBER_ID:
     st.error(
         "❌ **API Credentials missing!** Please configure `VAPI_API_KEY` and `VAPI_PHONE_NUMBER_ID` in Streamlit Secrets or `.env`."
     )
     st.stop()
 
-# Retrieve current DB state
 pending_patients = get_pending_patients()
 all_patients = get_all_patients()
 call_history = get_call_history()
@@ -59,65 +51,74 @@ pending_count = len(pending_patients)
 total_count = len(all_patients)
 called_count = total_count - pending_count
 
-
-# Metrics Summary Bar
 m1, m2, m3 = st.columns(3)
-m1.metric("Pending Calls", pending_count, delta_color="normal")
+m1.metric("Pending Calls", pending_count)
 m2.metric("Already Called", called_count)
 m3.metric("Total Patients in Roster", total_count)
 
 st.divider()
 
-
 # ==========================================
-# 3. SIDEBAR UTILITIES
+# SIDEBAR CONTROLS (WITH SCHEDULE TOGGLE)
 # ==========================================
 with st.sidebar:
-    st.header("⚙️ Admin Controls")
-    st.markdown("Use this utility to reset all patient call statuses for testing.")
+    st.header("⚙️ Automation Settings")
 
-    if st.button("🔄 Reset All Patients to 'Uncalled'", use_container_width=True):
+    # Interactive Toggle for 8:00 AM PST Daily Schedule
+    current_schedule_state = is_daily_schedule_enabled()
+    new_schedule_state = st.toggle(
+        "⏰ Automated Daily 8:00 AM PST Calls",
+        value=current_schedule_state,
+        help="When turned ON, the system automatically triggers batch calls every day at 8:00 AM PST for all pending patients.",
+    )
+
+    if new_schedule_state != current_schedule_state:
+        set_daily_schedule_enabled(new_schedule_state)
+        st.success(
+            f"Schedule updated: {'Enabled (Active at 8 AM PST)' if new_schedule_state else 'Disabled'}"
+        )
+        st.rerun()
+
+    st.markdown("---")
+    st.header("🔄 Admin Utilities")
+
+    if st.button("Reset All Patients to 'Uncalled'", use_container_width=True):
         reset_all_patients_called_status()
         st.success("All patient records set to `called_yet = False`!")
         st.rerun()
 
     st.markdown("---")
-    st.markdown("### System Specs")
     st.write(f"**Database:** `patients.db` (SQLite)")
-    st.write(f"**Voice Model:** OpenAI `gpt-4o-mini`")
-    st.write(f"**Transcription:** Deepgram `nova-3`")
+    st.write(f"**Timezone:** US / Pacific (PST)")
 
 
 # ==========================================
-# 4. BATCH CALL EXECUTION SECTION
+# BATCH CALL EXECUTION SECTION
 # ==========================================
-st.subheader("🚀 Batch Call Trigger")
+st.subheader("🚀 Manual Batch Call Trigger")
 
 if pending_count == 0:
     st.info(
-        "🎉 **All patients have already been called!** Click 'Reset All Patients' in the sidebar if you want to re-run a batch test."
+        "🎉 **All patients have already been called!** Click 'Reset All Patients' in the sidebar to re-run a batch test."
     )
 else:
     st.write(
-        f"Click below to initiate automated voice reminder calls for all **{pending_count} pending patient(s)**."
+        f"Click below to manually initiate voice reminder calls for all **{pending_count} pending patient(s)** immediately."
     )
 
-    # Batch Call Button
     if st.button(
-        f"📞 Call All {pending_count} Pending Patients",
+        f"📞 Call All {pending_count} Pending Patients Now",
         type="primary",
         use_container_width=True,
     ):
         progress_bar = st.progress(0, text="Initializing batch calling...")
         status_box = st.empty()
 
-        # Define progress update callback for Streamlit UI
         def update_ui_progress(current_idx: int, total: int, message: str):
             percent = int((current_idx / total) * 100)
             progress_bar.progress(percent, text=message)
             status_box.info(f"⏳ **Processing:** {message}")
 
-        # Execute Batch Call Loop
         summary = process_batch_calls(
             api_key=VAPI_API_KEY,
             phone_number_id=VAPI_PHONE_NUMBER_ID,
@@ -126,17 +127,15 @@ else:
 
         progress_bar.progress(100, text="Batch processing complete!")
         status_box.success(
-            f"✅ **Batch Complete!** Executed {summary['successful']} call(s) successfully out of {summary['total']} pending."
+            f"✅ **Batch Complete!** Executed {summary['successful']} call(s) successfully."
         )
 
-        # Pause briefly and refresh UI to update data tables
         st.rerun()
 
 st.divider()
 
-
 # ==========================================
-# 5. DATA TABLES & MONITORING
+# DATA TABLES & MONITORING
 # ==========================================
 tab1, tab2, tab3 = st.tabs([
     "📋 Pending Queue",
@@ -144,13 +143,11 @@ tab1, tab2, tab3 = st.tabs([
     "📊 Call Attempts Audit History",
 ])
 
-# TAB 1: PENDING PATIENTS QUEUE
 with tab1:
     st.subheader("Patients Pending Calls (`called_yet = False`)")
     if pending_count == 0:
         st.write("No patients currently waiting for calls.")
     else:
-        # Display formatted table of pending patients
         formatted_pending = []
         for p in pending_patients:
             formatted_pending.append({
@@ -163,7 +160,6 @@ with tab1:
             })
         st.dataframe(formatted_pending, use_container_width=True)
 
-# TAB 2: FULL PATIENT ROSTER
 with tab2:
     st.subheader("Complete Patient Registry")
     formatted_roster = []
@@ -179,9 +175,8 @@ with tab2:
         })
     st.dataframe(formatted_roster, use_container_width=True)
 
-# TAB 3: CALL ATTEMPTS HISTORY
 with tab3:
-    st.subheader("Logged Interaction History (`call_attempts`)")
+    st.subheader("Logged Interaction History (`call_attempts`) - PST")
     if not call_history:
         st.write("No calls logged yet.")
     else:
@@ -192,7 +187,7 @@ with tab3:
                 "Patient Name": f"{h['first_name']} {h['last_name']}",
                 "Status": h["status"],
                 "Decision": h["decision"],
-                "Response": h["user_speech"],  # Updated column name
-                "Timestamp": h["created_at"],
+                "Response": h["user_speech"],
+                "Timestamp (PST)": h["created_at"],
             })
         st.dataframe(formatted_history, use_container_width=True)

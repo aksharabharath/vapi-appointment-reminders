@@ -1,11 +1,24 @@
 import os
 import sys
-from vapi_call_automation import get_pst_now_str, process_batch_calls
+from vapi_call_automation import (
+    get_pst_now_str,
+    is_daily_schedule_enabled,
+    process_batch_calls,
+)
 
 
 def run_cron_job():
+    print(f"⏰ [{get_pst_now_str()}] Checking daily 8:00 AM PST schedule status...")
+
+    # Check if the schedule toggle is ON in SQLite settings
+    if not is_daily_schedule_enabled():
+        print(
+            f"⏸️ [{get_pst_now_str()}] Daily schedule is currently TOGGLED OFF in UI settings. Skipping run."
+        )
+        return
+
     print(
-        f"⏰ [{get_pst_now_str()}] Starting automated 8:00 AM PST daily call batch run..."
+        f"🚀 [{get_pst_now_str()}] Schedule is ENABLED. Starting batch call run..."
     )
 
     api_key = os.getenv("VAPI_API_KEY", "")

@@ -42,6 +42,53 @@ def get_db_connection() -> sqlite3.Connection:
     return conn
 
 
+def init_settings_table():
+    """Ensures the settings key-value table exists with daily schedule default = enabled (1)."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+    cursor.execute("""
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('daily_schedule_enabled', '1')
+    """)
+    conn.commit()
+    conn.close()
+
+
+def is_daily_schedule_enabled() -> bool:
+    """Checks whether the automated 8 AM PST schedule is turned ON in UI settings."""
+    init_settings_table()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT value FROM settings WHERE key = 'daily_schedule_enabled'"
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row["value"] == "1" if row else True
+
+
+def set_daily_schedule_enabled(enabled: bool):
+    """Updates the daily schedule setting (1 = enabled, 0 = disabled)."""
+    init_settings_table()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    val = "1" if enabled else "0"
+    cursor.execute(
+        """
+        INSERT INTO settings (key, value) VALUES ('daily_schedule_enabled', ?)
+        ON CONFLICT(key) DO UPDATE SET value = ?
+    """,
+        (val, val),
+    )
+    conn.commit()
+    conn.close()
+
+
 def get_pending_patients() -> List[Dict]:
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -359,7 +406,7 @@ def process_batch_calls(
             user_speech=call_result["user_speech"],
         )
 
-        # STRICT RULE: Only mark called_yet = 1 if CONFIRMED or RESCHEDULE
+        # STRICT RULE: Only set called_yet = 1 if CONFIRMED or RESCHEDULE
         if call_result["decision"] in ["CONFIRMED", "RESCHEDULE"]:
             mark_patient_as_called(patient_id)
 
