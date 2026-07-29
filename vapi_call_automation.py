@@ -1,9 +1,10 @@
 import os
+import re
 import sqlite3
 import subprocess
 import time
 from datetime import datetime
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 import pytz
 import requests
 
@@ -50,6 +51,71 @@ def format_date_for_speech(raw_date_str: str) -> str:
         return dt.strftime(f"%A, %B {day}{suffix}")
     except Exception:
         return str(raw_date_str)
+
+
+# ==========================================
+# PRE-CALL DATA VALIDATOR MODULE
+# ==========================================
+
+
+def validate_patient_record(patient: Dict) -> Tuple[bool, List[str], str]:
+    """Validates patient record fields before initiating a Vapi phone call.
+
+    Returns:
+        (is_valid: bool, errors: List[str], formatted_e164_phone: str)
+    """
+    errors = []
+
+    # 1. Validate First & Last Name
+    first_name = str(patient.get("first_name", "") or "").strip()
+    last_name = str(patient.get("last_name", "") or "").strip()
+
+    if not first_name or not last_name:
+        errors.append("Missing patient name (first or last name is blank).")
+
+    # 2. Validate Phone Number (E.164 compliance and digit length check)
+    raw_phone = str(patient.get("phone_number", "") or "").strip()
+    digits_only = re.sub(r"\D", "", raw_phone)
+
+    formatted_phone = ""
+    if not digits_only:
+        errors.append("Missing phone number.")
+    elif len(digits_only) < 10 or len(digits_only) > 15:
+        errors.append(
+            f"Invalid phone number length ({len(digits_only)} digits; must be 10-15 digits)."
+        )
+    else:
+        if len(digits_only) == 10:
+            formatted_phone = f"+1{digits_only}"
+        elif raw_phone.startswith("+"):
+            formatted_phone = f"+{digits_only}"
+        else:
+            formatted_phone = f"+{digits_only}"
+
+    # 3. Validate Appointment Date Format and Real Calendar Bounds
+    raw_date = str(patient.get("appointment_date", "") or "").strip()
+    if not raw_date:
+        errors.append("Missing appointment date.")
+    else:
+        try:
+            parsed_date = datetime.strptime(raw_date, "%Y-%m-%d")
+            # Ensure date isn't obviously in the past (prior to year 2020)
+            if parsed_date.year < 2020:
+                errors.append(
+                    f"Appointment date '{raw_date}' is invalid or far in the past."
+                )
+        except ValueError:
+            errors.append(
+                f"Invalid date format '{raw_date}' (must be YYYY-MM-DD)."
+            )
+
+    # 4. Validate Appointment Time
+    raw_time = str(patient.get("appointment_time", "") or "").strip()
+    if not raw_time:
+        errors.append("Missing appointment time.")
+
+    is_valid = len(errors) == 0
+    return is_valid, errors, formatted_phone
 
 
 # ==========================================
@@ -228,7 +294,10 @@ def get_call_history() -> List[Dict]:
 
 
 def trigger_vapi_outbound_call(
-    patient: Dict, api_key: str, phone_number_id: str
+    patient: Dict,
+    api_key: str,
+    phone_number_id: str,
+    formatted_phone: str = "",
 ) -> Optional[str]:
     url = "https://api.vapi.ai/call/phone"
 
@@ -242,9 +311,10 @@ def trigger_vapi_outbound_call(
     spoken_date = format_date_for_speech(patient["appointment_date"])
     appt_time = patient["appointment_time"]
 
-    raw_phone = str(patient["phone_number"]).strip()
-    if not raw_phone.startswith("+"):
-        raw_phone = f"+1{raw_phone}"
+    destination_phone = (
+        formatted_phone
+        or str(patient.get("phone_number", "")).strip()
+    )
 
     prompt_text = (
         f"You are calling {patient_name} to confirm their appointment on {spoken_date} at {appt_time}.\n\n"
@@ -258,7 +328,7 @@ def trigger_vapi_outbound_call(
 
     payload = {
         "phoneNumberId": phone_number_id,
-        "customer": {"number": raw_phone},
+        "customer": {"number": destination_phone},
         "assistant": {
             "firstMessage": f"Hello {first_name}, this is an automated reminder for your appointment on {spoken_date} at {appt_time}. Say 1 to confirm, or say 2 to reschedule.",
             "voicemailMessage": f"Hello {first_name}, this is an automated reminder regarding your appointment on {spoken_date} at {appt_time}. Please call our office back to confirm. Thank you!",
@@ -316,7 +386,6 @@ def poll_vapi_call_status(
                 if status in ["ended", "completed"]:
                     messages = data.get("messages", [])
                     transcript = data.get("transcript", "")
-                    summary = data.get("summary", "")
 
                     if "voicemail" in ended_reason.lower():
                         return {
@@ -325,7 +394,6 @@ def poll_vapi_call_status(
                             "user_speech": "[Voicemail - Left Message]",
                         }
 
-                    # Extract user utterances from messages payload
                     user_speech_parts = []
                     for msg in messages:
                         role = msg.get("role", "").lower()
@@ -333,18 +401,24 @@ def poll_vapi_call_status(
                         if role in ["user", "customer"] and content:
                             user_speech_parts.append(str(content).strip())
 
-                    # Fallback to transcript parsing if messages array didn't contain explicit user roles
                     full_user_speech = " ".join(user_speech_parts).strip()
                     if not full_user_speech and transcript:
                         full_user_speech = transcript.strip()
 
-                    # Classify decision intent
                     speech_lower = full_user_speech.lower()
                     decision = "NO_INPUT"
 
-                    if "1" in speech_lower or "confirm" in speech_lower or "yes" in speech_lower:
+                    if (
+                        "1" in speech_lower
+                        or "confirm" in speech_lower
+                        or "yes" in speech_lower
+                    ):
                         decision = "CONFIRMED"
-                    elif "2" in speech_lower or "reschedule" in speech_lower or "change" in speech_lower:
+                    elif (
+                        "2" in speech_lower
+                        or "reschedule" in speech_lower
+                        or "change" in speech_lower
+                    ):
                         decision = "RESCHEDULE"
                     elif full_user_speech:
                         decision = "INVALID"
@@ -368,7 +442,7 @@ def poll_vapi_call_status(
 
 
 # ==========================================
-# 3. BATCH PROCESSOR FOR UNCALLED PATIENTS
+# 3. BATCH PROCESSOR WITH PRE-CALL VALIDATION
 # ==========================================
 
 
@@ -395,17 +469,41 @@ def process_batch_calls(
 
     for idx, patient in enumerate(pending_patients, start=1):
         patient_id = patient["patient_id"]
-        patient_name = f"{patient['first_name']} {patient['last_name']}"
+        patient_name = f"{patient.get('first_name', '')} {patient.get('last_name', '')}".strip() or f"Patient #{patient_id}"
 
         if progress_callback:
             progress_callback(
                 idx,
                 total_patients,
-                f"Calling {patient_name} ({idx}/{total_patients})...",
+                f"Validating & Processing {patient_name} ({idx}/{total_patients})...",
             )
 
+        # ---------------------------------------------------------
+        # PRE-CALL DATA VALIDATION CHECK
+        # ---------------------------------------------------------
+        is_valid, validation_errors, formatted_phone = validate_patient_record(patient)
+
+        if not is_valid:
+            error_msg = f"Validation Failed: {'; '.join(validation_errors)}"
+            log_call_attempt(
+                patient_id=patient_id,
+                vapi_call_id="SKIPPED_INVALID_DATA",
+                status="SKIPPED",
+                decision="INVALID_DATA",
+                user_speech=error_msg,
+            )
+            failed += 1
+            results_detail.append({
+                "patient": patient_name,
+                "status": "SKIPPED",
+                "decision": "INVALID_DATA",
+                "reason": error_msg,
+            })
+            continue
+
+        # Trigger Vapi Call with formatted phone number
         vapi_call_id = trigger_vapi_outbound_call(
-            patient, api_key, phone_number_id
+            patient, api_key, phone_number_id, formatted_phone=formatted_phone
         )
 
         if not vapi_call_id:
@@ -436,7 +534,6 @@ def process_batch_calls(
             user_speech=call_result["user_speech"],
         )
 
-        # STRICT RULE: Update called_yet = 1 if decision is CONFIRMED or RESCHEDULE
         if call_result["decision"] in ["CONFIRMED", "RESCHEDULE"]:
             mark_patient_as_called(patient_id)
 
@@ -449,8 +546,8 @@ def process_batch_calls(
 
         time.sleep(2)
 
-    # Automatically commit and push patients.db changes to GitHub
-    auto_commit_db_to_git("Log batch call attempts and patient status updates")
+    # Push updated SQLite database to GitHub
+    auto_commit_db_to_git("Log batch call attempts and validation results")
 
     return {
         "total": total_patients,
