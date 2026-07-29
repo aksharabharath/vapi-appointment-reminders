@@ -110,7 +110,7 @@ with col_sched:
         st.rerun()
         
 with col_trigger:
-    st.markdown("### 🚀 Manual Execution")
+    st.markdown("###  Manual Execution")
     st.write(
         f"Click below to immediately initiate outbound voice calls for all **{pending_count} pending patient(s)**."
     )
@@ -157,7 +157,7 @@ st.divider()
 st.subheader("📊 Patient & Audit Data")
 
 tab1, tab2, tab3 = st.tabs(
-    ["📋 Pending Queue", "👥 Full Patient Roster", "📜 Call Audit History"]
+    ["Pending Queue", "Full Patient Roster", "Call Audit History"]
 )
 
 with tab1:
