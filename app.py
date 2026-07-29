@@ -50,7 +50,6 @@ if not VAPI_API_KEY or not VAPI_PHONE_NUMBER_ID:
 # Load DB records
 pending_patients = get_pending_patients()
 all_patients = get_all_patients()
-call_history = get_call_history()
 
 pending_count = len(pending_patients)
 total_count = len(all_patients)
@@ -84,6 +83,73 @@ if new_schedule_state != current_schedule_state:
 
 st.divider()
 
+# Placeholders for dynamic tab updates during manual batch run
+tabs_container = st.container()
+
+# Function to render tables dynamically
+def render_tables(history_placeholder=None):
+    call_history = get_call_history()
+    current_pending = get_pending_patients()
+    current_all = get_all_patients()
+
+    tab1, tab2, tab3 = st.tabs([
+        "📋 Pending Queue",
+        "👥 Full Patient Roster",
+        "📊 Call Attempts Audit History",
+    ])
+
+    with tab1:
+        st.subheader("Patients Pending Calls (`called_yet = False`)")
+        if not current_pending:
+            st.write("No patients currently waiting for calls.")
+        else:
+            formatted_pending = [
+                {
+                    "ID": p["patient_id"],
+                    "Name": f"{p['first_name']} {p['last_name']}",
+                    "Phone": p["phone_number"],
+                    "Appointment Date": p["appointment_date"],
+                    "Appointment Time": p["appointment_time"],
+                    "Status": "⏳ Pending Call",
+                }
+                for p in current_pending
+            ]
+            st.dataframe(formatted_pending, use_container_width=True)
+
+    with tab2:
+        st.subheader("Complete Patient Registry")
+        formatted_roster = [
+            {
+                "ID": p["patient_id"],
+                "Name": f"{p['first_name']} {p['last_name']}",
+                "Phone": p["phone_number"],
+                "Appointment Date": p["appointment_date"],
+                "Appointment Time": p["appointment_time"],
+                "Called Yet?": "✅ True" if bool(p.get("called_yet")) else "❌ False",
+            }
+            for p in current_all
+        ]
+        st.dataframe(formatted_roster, use_container_width=True)
+
+    with tab3:
+        st.subheader("Logged Interaction History (`call_attempts`) - PST")
+        if not call_history:
+            st.write("No calls logged yet.")
+        else:
+            formatted_history = [
+                {
+                    "Attempt ID": h["call_attempt_id"],
+                    "Patient Name": f"{h['first_name']} {h['last_name']}",
+                    "Status": h["status"],
+                    "Decision": h["decision"],
+                    "Response": h["user_speech"],
+                    "Timestamp (PST)": h["created_at"],
+                }
+                for h in call_history
+            ]
+            st.dataframe(formatted_history, use_container_width=True)
+
+
 # ==========================================
 # 3. BATCH CALL TRIGGER SECTION
 # ==========================================
@@ -105,11 +171,16 @@ else:
     ):
         progress_bar = st.progress(0, text="Initializing batch calling...")
         status_box = st.empty()
+        live_tables_box = st.empty()
 
         def update_ui_progress(current_idx: int, total: int, message: str):
             percent = int((current_idx / total) * 100)
             progress_bar.progress(percent, text=message)
             status_box.info(f"⏳ **Processing:** {message}")
+            
+            # Live render tables as each call completes
+            with live_tables_box.container():
+                render_tables()
 
         summary = process_batch_calls(
             api_key=VAPI_API_KEY,
@@ -126,68 +197,13 @@ else:
 
 st.divider()
 
-# ==========================================
-# 4. DATA TABLES & MONITORING
-# ==========================================
-tab1, tab2, tab3 = st.tabs([
-    "📋 Pending Queue",
-    "👥 Full Patient Roster",
-    "📊 Call Attempts Audit History",
-])
-
-with tab1:
-    st.subheader("Patients Pending Calls (`called_yet = False`)")
-    if pending_count == 0:
-        st.write("No patients currently waiting for calls.")
-    else:
-        formatted_pending = []
-        for p in pending_patients:
-            formatted_pending.append({
-                "ID": p["patient_id"],
-                "Name": f"{p['first_name']} {p['last_name']}",
-                "Phone": p["phone_number"],
-                "Appointment Date": p["appointment_date"],
-                "Appointment Time": p["appointment_time"],
-                "Status": "⏳ Pending Call",
-            })
-        st.dataframe(formatted_pending, use_container_width=True)
-
-with tab2:
-    st.subheader("Complete Patient Registry")
-    formatted_roster = []
-    for p in all_patients:
-        is_called = bool(p.get("called_yet"))
-        formatted_roster.append({
-            "ID": p["patient_id"],
-            "Name": f"{p['first_name']} {p['last_name']}",
-            "Phone": p["phone_number"],
-            "Appointment Date": p["appointment_date"],
-            "Appointment Time": p["appointment_time"],
-            "Called Yet?": "✅ True" if is_called else "❌ False",
-        })
-    st.dataframe(formatted_roster, use_container_width=True)
-
-with tab3:
-    st.subheader("Logged Interaction History (`call_attempts`) - PST")
-    if not call_history:
-        st.write("No calls logged yet.")
-    else:
-        formatted_history = []
-        for h in call_history:
-            formatted_history.append({
-                "Attempt ID": h["call_attempt_id"],
-                "Patient Name": f"{h['first_name']} {h['last_name']}",
-                "Status": h["status"],
-                "Decision": h["decision"],
-                "Response": h["user_speech"],
-                "Timestamp (PST)": h["created_at"],
-            })
-        st.dataframe(formatted_history, use_container_width=True)
+# Initial render of tables when not running a batch
+render_tables()
 
 st.divider()
 
 # ==========================================
-# 5. ADMIN UTILITIES (MOVED TO BOTTOM)
+# 4. ADMIN UTILITIES
 # ==========================================
 st.subheader("⚙️ Admin Utilities")
 st.write("Use this utility to reset all patient call statuses for re-testing.")
