@@ -69,9 +69,9 @@ st.divider()
 st.subheader("Automated Daily Schedule")
 current_schedule_state = is_daily_schedule_enabled()
 new_schedule_state = st.toggle(
-    "Enable Automated Daily 8:00 AM PST Call Batch",
+    "Enable Automated Daily 9:30 AM PST Call Batch",
     value=current_schedule_state,
-    help="When enabled, the system will automatically run batch calls every morning at 8:00 AM PST for all pending patients.",
+    help="When enabled, the system will automatically run batch calls every morning at 9:30 AM PST for all pending patients.",
 )
 
 if new_schedule_state != current_schedule_state:
