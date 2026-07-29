@@ -15,7 +15,6 @@ PST_TZ = pytz.timezone("America/Los_Angeles")
 def auto_commit_db_to_git(commit_message: str = "Auto-update patients.db"):
     """Pushes local SQLite database changes back to GitHub so data persists across refreshes."""
     try:
-        # Force SQLite checkpoint to flush all pending writes from memory to patients.db disk file
         conn = sqlite3.connect(DB_PATH)
         conn.execute("PRAGMA wal_checkpoint(FULL);")
         conn.close()
@@ -65,7 +64,7 @@ def get_db_connection() -> sqlite3.Connection:
 
 
 def init_settings_table():
-    """Ensures the settings key-value table exists with daily schedule default = enabled (1)."""
+    """Ensures settings table exists with daily schedule default = enabled (1)."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -82,7 +81,7 @@ def init_settings_table():
 
 
 def is_daily_schedule_enabled() -> bool:
-    """Checks whether the automated 8 AM PST schedule is turned ON in UI settings."""
+    """Checks whether automated 8 AM PST schedule is turned ON in UI settings."""
     init_settings_table()
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -95,7 +94,7 @@ def is_daily_schedule_enabled() -> bool:
 
 
 def set_daily_schedule_enabled(enabled: bool):
-    """Updates the daily schedule setting (1 = enabled, 0 = disabled)."""
+    """Updates daily schedule setting (1 = enabled, 0 = disabled)."""
     init_settings_table()
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -112,13 +111,14 @@ def set_daily_schedule_enabled(enabled: bool):
 
 
 def get_pending_patients() -> List[Dict]:
+    """Retrieves all patients where called_yet is 0, '0', FALSE, or NULL."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
         SELECT patient_id, first_name, last_name, phone_number, appointment_date, appointment_time, timezone
         FROM patients
-        WHERE called_yet = 0 OR called_yet IS NULL OR called_yet = 'FALSE' or called_yet = 0.0
+        WHERE called_yet = 0 OR called_yet = '0' OR called_yet IS NULL OR called_yet = 'FALSE' or called_yet = 0.0
         ORDER BY patient_id ASC
     """
     )
@@ -143,7 +143,7 @@ def get_all_patients() -> List[Dict]:
 
 
 def mark_patient_as_called(patient_id: int):
-    """Strictly sets called_yet = 1 in SQLite database for a given patient_id."""
+    """Explicitly updates called_yet = 1 and commits immediately."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -301,6 +301,7 @@ def trigger_vapi_outbound_call(
 def poll_vapi_call_status(
     vapi_call_id: str, api_key: str, max_attempts: int = 15, delay: int = 4
 ) -> Dict:
+    """Polls Vapi API and thoroughly extracts user speech from messages, transcript, or summary."""
     url = f"https://api.vapi.ai/call/{vapi_call_id}"
     headers = {"Authorization": f"Bearer {api_key}"}
 
@@ -314,6 +315,8 @@ def poll_vapi_call_status(
 
                 if status in ["ended", "completed"]:
                     messages = data.get("messages", [])
+                    transcript = data.get("transcript", "")
+                    summary = data.get("summary", "")
 
                     if "voicemail" in ended_reason.lower():
                         return {
@@ -322,31 +325,34 @@ def poll_vapi_call_status(
                             "user_speech": "[Voicemail - Left Message]",
                         }
 
-                    user_responses = [
-                        msg.get("content", "").strip()
-                        for msg in messages
-                        if msg.get("role") == "user" and msg.get("content")
-                    ]
+                    # Extract user utterances from messages payload
+                    user_speech_parts = []
+                    for msg in messages:
+                        role = msg.get("role", "").lower()
+                        content = msg.get("message", "") or msg.get("content", "")
+                        if role in ["user", "customer"] and content:
+                            user_speech_parts.append(str(content).strip())
 
-                    patient_speech = (
-                        user_responses[-1] if user_responses else ""
-                    )
+                    # Fallback to transcript parsing if messages array didn't contain explicit user roles
+                    full_user_speech = " ".join(user_speech_parts).strip()
+                    if not full_user_speech and transcript:
+                        full_user_speech = transcript.strip()
 
+                    # Classify decision intent
+                    speech_lower = full_user_speech.lower()
                     decision = "NO_INPUT"
-                    if "1" in patient_speech or "confirm" in patient_speech.lower():
+
+                    if "1" in speech_lower or "confirm" in speech_lower or "yes" in speech_lower:
                         decision = "CONFIRMED"
-                    elif (
-                        "2" in patient_speech
-                        or "reschedule" in patient_speech.lower()
-                    ):
+                    elif "2" in speech_lower or "reschedule" in speech_lower or "change" in speech_lower:
                         decision = "RESCHEDULE"
-                    elif patient_speech:
+                    elif full_user_speech:
                         decision = "INVALID"
 
                     return {
                         "status": "COMPLETED",
                         "decision": decision,
-                        "user_speech": patient_speech or "No response detected",
+                        "user_speech": full_user_speech or "No response detected",
                     }
 
             time.sleep(delay)
@@ -430,7 +436,7 @@ def process_batch_calls(
             user_speech=call_result["user_speech"],
         )
 
-        # STRICT RULE: Only set called_yet = 1 if CONFIRMED or RESCHEDULE
+        # STRICT RULE: Update called_yet = 1 if decision is CONFIRMED or RESCHEDULE
         if call_result["decision"] in ["CONFIRMED", "RESCHEDULE"]:
             mark_patient_as_called(patient_id)
 
