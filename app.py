@@ -84,6 +84,11 @@ if new_schedule_state != current_schedule_state:
 st.divider()
 
 
+# Place near the top of render_tables() in app.py
+if st.button("🔄 Sync & Refresh Tables"):
+    st.cache_data.clear()
+    st.rerun()
+    
 # Function to render fresh database tables dynamically
 def render_tables():
     call_history = get_call_history()
