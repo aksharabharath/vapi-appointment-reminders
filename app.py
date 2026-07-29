@@ -83,6 +83,66 @@ if new_schedule_state != current_schedule_state:
 
 st.divider()
 
+import streamlit as st
+from vapi_call_automation import (
+    get_scheduled_call_time,
+    is_daily_schedule_enabled,
+    set_daily_schedule_enabled,
+    set_scheduled_call_time,
+)
+
+# Header Settings Section
+st.title("📞 AI Appointment Assistant")
+
+col1, col2 = st.columns([2, 2])
+
+with col1:
+    # Daily Schedule Toggle
+    schedule_enabled = is_daily_schedule_enabled()
+    new_toggle_state = st.toggle(
+        "Enable Automated Daily Call Batch", value=schedule_enabled
+    )
+
+    if new_toggle_state != schedule_enabled:
+        set_daily_schedule_enabled(new_toggle_state)
+        st.toast(
+            f"Daily Schedule {'Enabled' if new_toggle_state else 'Disabled'}!"
+        )
+
+with col2:
+    # Interactive Call Schedule Dropdown
+    current_scheduled_time = get_scheduled_call_time()
+    time_options = [
+        "08:00 AM",
+        "08:30 AM",
+        "09:00 AM",
+        "09:30 AM",
+        "09:50 AM",
+        "10:00 AM",
+        "10:30 AM",
+        "11:00 AM",
+        "01:00 PM",
+        "02:00 PM",
+    ]
+
+    # Index finder for selected option
+    selected_index = (
+        time_options.index(current_scheduled_time)
+        if current_scheduled_time in time_options
+        else 4
+    )
+
+    selected_time = st.selectbox(
+        "⏰ Select Daily Automated Call Time (PST):",
+        options=time_options,
+        index=selected_index,
+        disabled=not new_toggle_state,
+    )
+
+    if selected_time != current_scheduled_time:
+        set_scheduled_call_time(selected_time)
+        st.toast(f"✅ Daily calling time updated to {selected_time} PST!")
+        st.cache_data.clear()
 
 # Place near the top of render_tables() in app.py
 if st.button("🔄 Sync & Refresh Tables"):

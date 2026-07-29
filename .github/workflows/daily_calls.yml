@@ -1,10 +1,10 @@
-name: Daily 9:30 AM Pacific Batch Appointment Calls
+name: Dynamic Daily Automated Batch Appointment Calls
 
 on:
   schedule:
-    # 9:30 AM Pacific Time (16:30 UTC during Daylight Saving Time)
-    - cron: '30 16 * * *'
-  workflow_dispatch: # Allows manual trigger from GitHub Actions UI
+    # Checks every 15 minutes between 8 AM - 5 PM Pacific Time
+    - cron: '*/15 15-23 * * *'
+  workflow_dispatch: # Allows manual override trigger from UI anytime
 
 jobs:
   run-batch-calls:

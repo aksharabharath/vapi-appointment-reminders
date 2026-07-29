@@ -564,3 +564,31 @@ def process_batch_calls(
         "failed": failed,
         "details": results_detail,
     }
+
+def get_scheduled_call_time() -> str:
+    """Retrieves the operator-selected scheduled call time string (e.g. '09:50 AM'). Defaults to '09:50 AM'."""
+    init_settings_table()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT value FROM settings WHERE key = 'scheduled_call_time'"
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row["value"] if row else "09:50 AM"
+
+
+def set_scheduled_call_time(time_str: str):
+    """Updates the scheduled call time in SQLite settings."""
+    init_settings_table()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO settings (key, value) VALUES ('scheduled_call_time', ?)
+        ON CONFLICT(key) DO UPDATE SET value = ?
+    """,
+        (time_str, time_str),
+    )
+    conn.commit()
+    conn.close()
