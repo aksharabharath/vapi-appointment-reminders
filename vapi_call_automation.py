@@ -165,7 +165,7 @@ def trigger_vapi_outbound_call(
 
     prompt_text = (
         f"You are calling {patient_name} to confirm their appointment on {spoken_date} at {appt_time}.\n\n"
-        "INSTRUCTIONS:\n"
+        "INSTRUCTIONS FOR LIVE HUMAN:\n"
         "1. Do NOT greet them again.\n"
         "2. Listen for their numerical or verbal answer (1/confirm OR 2/reschedule).\n"
         "3. If they say 1 or confirm: Say 'Thank you, your appointment is confirmed! Have a great day and goodbye!'\n"
@@ -177,7 +177,19 @@ def trigger_vapi_outbound_call(
         "phoneNumberId": phone_number_id,
         "customer": {"number": raw_phone},
         "assistant": {
+            # Greeting for live humans
             "firstMessage": f"Hello {first_name}, this is an automated reminder for your appointment on {spoken_date} at {appt_time}. Say 1 to confirm, or say 2 to reschedule.",
+            # Dedicated non-interactive voicemail drop
+            "voicemailMessage": f"Hello {first_name}, this is an automated reminder from Dr. Office regarding your upcoming appointment on {spoken_date} at {appt_time}. Please call our office back at your earliest convenience to confirm. Thank you!",
+            "voicemailDetection": {
+                "provider": "vapi",
+                "backoffPlan": {
+                    "maxRetries": 5,
+                    "startAtSeconds": 2.5,
+                    "frequencySeconds": 2.5,
+                },
+                "beepMaxAwaitSeconds": 25,
+            },
             "model": {
                 "provider": "openai",
                 "model": "gpt-4o-mini",
@@ -204,7 +216,7 @@ def trigger_vapi_outbound_call(
         print(f"Exception triggering Vapi call: {e}")
         return None
 
-    
+        
 def poll_vapi_call_status(
     vapi_call_id: str, api_key: str, max_attempts: int = 15, delay: int = 4
 ) -> Dict:
@@ -217,10 +229,19 @@ def poll_vapi_call_status(
             if res.status_code == 200:
                 data = res.json()
                 status = data.get("status")
+                ended_reason = data.get("endedReason", "")
 
                 if status in ["ended", "completed"]:
                     transcript = data.get("transcript", "")
                     messages = data.get("messages", [])
+
+                    # Check if Vapi flagged call as voicemail
+                    if "voicemail" in ended_reason.lower():
+                        return {
+                            "status": "COMPLETED",
+                            "decision": "VOICEMAIL",
+                            "user_speech": "Voicemail detected - left automated message.",
+                        }
 
                     patient_speech = ""
                     for msg in messages:
