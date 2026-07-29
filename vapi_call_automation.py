@@ -315,7 +315,9 @@ def process_batch_calls(
 
         if progress_callback:
             progress_callback(
-                idx, total_patients, f"Calling {patient_name} ({idx}/{total_patients})..."
+                idx,
+                total_patients,
+                f"Calling {patient_name} ({idx}/{total_patients})...",
             )
 
         vapi_call_id = trigger_vapi_outbound_call(
@@ -323,6 +325,7 @@ def process_batch_calls(
         )
 
         if not vapi_call_id:
+            # Failed to place call -> Keep called_yet = 0 so they can be retried later
             log_call_attempt(
                 patient_id=patient_id,
                 vapi_call_id="FAILED_TRIGGER",
@@ -330,7 +333,6 @@ def process_batch_calls(
                 decision="ERROR",
                 user_speech="Could not trigger call via Vapi API.",
             )
-            mark_patient_as_called(patient_id)
             failed += 1
             results_detail.append({
                 "patient": patient_name,
@@ -339,11 +341,12 @@ def process_batch_calls(
             })
             continue
 
-        # Poll for completion
+        # Poll Vapi for call results
         call_result = poll_vapi_call_status(
             vapi_call_id, api_key, max_attempts=12, delay=4
         )
 
+        # Always log the attempt interaction
         log_call_attempt(
             patient_id=patient_id,
             vapi_call_id=vapi_call_id,
@@ -352,7 +355,12 @@ def process_batch_calls(
             user_speech=call_result["user_speech"],
         )
 
-        mark_patient_as_called(patient_id)
+        # CONDITIONAL UPDATE: Only set called_yet = 1 if the patient interacted or received a voicemail
+        # If decision is NO_INPUT or ERROR, keep called_yet = 0 so they stay in pending queue
+        valid_completion_decisions = ["CONFIRMED", "RESCHEDULE", "VOICEMAIL"]
+
+        if call_result["decision"] in valid_completion_decisions:
+            mark_patient_as_called(patient_id)
 
         successful += 1
         results_detail.append({
@@ -361,7 +369,7 @@ def process_batch_calls(
             "decision": call_result["decision"],
         })
 
-        # Buffer pause between sequential calls to ensure clean line handoff
+        # Brief pause between calls
         time.sleep(3)
 
     return {
