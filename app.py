@@ -47,7 +47,7 @@ if not VAPI_API_KEY or not VAPI_PHONE_NUMBER_ID:
     )
     st.stop()
 
-# Load DB records
+# Fresh database fetch
 pending_patients = get_pending_patients()
 all_patients = get_all_patients()
 
@@ -83,11 +83,9 @@ if new_schedule_state != current_schedule_state:
 
 st.divider()
 
-# Placeholders for dynamic tab updates during manual batch run
-tabs_container = st.container()
 
-# Function to render tables dynamically
-def render_tables(history_placeholder=None):
+# Function to render fresh database tables dynamically
+def render_tables():
     call_history = get_call_history()
     current_pending = get_pending_patients()
     current_all = get_all_patients()
@@ -101,7 +99,7 @@ def render_tables(history_placeholder=None):
     with tab1:
         st.subheader("Patients Pending Calls (`called_yet = False`)")
         if not current_pending:
-            st.write("No patients currently waiting for calls.")
+            st.write("🎉 No patients currently waiting for calls.")
         else:
             formatted_pending = [
                 {
@@ -177,8 +175,7 @@ else:
             percent = int((current_idx / total) * 100)
             progress_bar.progress(percent, text=message)
             status_box.info(f"⏳ **Processing:** {message}")
-            
-            # Live render tables as each call completes
+
             with live_tables_box.container():
                 render_tables()
 
@@ -193,11 +190,12 @@ else:
             f"✅ **Batch Complete!** Executed {summary['successful']} call(s) successfully."
         )
 
+        # Trigger full fresh rerun to synchronize metrics and tables
         st.rerun()
 
 st.divider()
 
-# Initial render of tables when not running a batch
+# Default render of tables
 render_tables()
 
 st.divider()

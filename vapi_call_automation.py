@@ -15,9 +15,12 @@ PST_TZ = pytz.timezone("America/Los_Angeles")
 def auto_commit_db_to_git(commit_message: str = "Auto-update patients.db"):
     """Pushes local SQLite database changes back to GitHub so data persists across refreshes."""
     try:
-        # Check if running in Git repository environment
+        # Force SQLite checkpoint to flush all pending writes from memory to patients.db disk file
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("PRAGMA wal_checkpoint(FULL);")
+        conn.close()
+
         subprocess.run(["git", "add", DB_PATH], check=True)
-        # Commit only if there are database changes
         result = subprocess.run(
             ["git", "commit", "-m", f"DB: {commit_message}"],
             capture_output=True,
@@ -56,7 +59,7 @@ def format_date_for_speech(raw_date_str: str) -> str:
 
 
 def get_db_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=20)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -115,7 +118,7 @@ def get_pending_patients() -> List[Dict]:
         """
         SELECT patient_id, first_name, last_name, phone_number, appointment_date, appointment_time, timezone
         FROM patients
-        WHERE called_yet = 0 OR called_yet IS NULL OR called_yet = 'FALSE'
+        WHERE called_yet = 0 OR called_yet IS NULL OR called_yet = 'FALSE' or called_yet = 0.0
         ORDER BY patient_id ASC
     """
     )
@@ -140,6 +143,7 @@ def get_all_patients() -> List[Dict]:
 
 
 def mark_patient_as_called(patient_id: int):
+    """Strictly sets called_yet = 1 in SQLite database for a given patient_id."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -437,7 +441,7 @@ def process_batch_calls(
             "decision": call_result["decision"],
         })
 
-        time.sleep(3)
+        time.sleep(2)
 
     # Automatically commit and push patients.db changes to GitHub
     auto_commit_db_to_git("Log batch call attempts and patient status updates")
