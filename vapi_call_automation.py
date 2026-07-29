@@ -1,15 +1,28 @@
 import os
 import sqlite3
 import time
+from datetime import datetime
 from typing import Callable, Dict, List, Optional
 import requests
 
 # SQLite Database File Path
 DB_PATH = "patients.db"
 
-# Default API Configuration
-DEFAULT_VAPI_API_KEY = os.getenv("VAPI_API_KEY", "")
-DEFAULT_VAPI_PHONE_NUMBER_ID = os.getenv("VAPI_PHONE_NUMBER_ID", "")
+
+def format_date_for_speech(raw_date_str: str) -> str:
+    """Converts YYYY-MM-DD or similar date string to spoken format like 'Wednesday, August 5th'."""
+    try:
+        dt = datetime.strptime(str(raw_date_str).strip(), "%Y-%m-%d")
+        day = dt.day
+        # Add ordinal suffix (1st, 2nd, 3rd, 4th...)
+        suffix = (
+            "th"
+            if 11 <= day <= 13
+            else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+        )
+        return dt.strftime(f"%A, %B {day}{suffix}")
+    except Exception:
+        return str(raw_date_str)
 
 
 # ==========================================
@@ -18,54 +31,45 @@ DEFAULT_VAPI_PHONE_NUMBER_ID = os.getenv("VAPI_PHONE_NUMBER_ID", "")
 
 
 def get_db_connection() -> sqlite3.Connection:
-    """Returns a connection to the local SQLite database."""
     conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row  # Enables column access by name
+    conn.row_factory = sqlite3.Row
     return conn
 
 
 def get_pending_patients() -> List[Dict]:
-    """Retrieves all patients from the database who have not been called yet (called_yet == 0/False)."""
     conn = get_db_connection()
     cursor = conn.cursor()
-
     cursor.execute(
         """
         SELECT patient_id, first_name, last_name, phone_number, appointment_date, appointment_time, timezone
         FROM patients
         WHERE called_yet = 0 OR called_yet IS NULL OR called_yet = 'FALSE'
+        ORDER BY patient_id ASC
     """
     )
-
     rows = cursor.fetchall()
     conn.close()
-
     return [dict(row) for row in rows]
 
 
 def get_all_patients() -> List[Dict]:
-    """Retrieves all patients regardless of called_yet status for full roster visibility."""
     conn = get_db_connection()
     cursor = conn.cursor()
-
     cursor.execute(
         """
         SELECT patient_id, first_name, last_name, phone_number, appointment_date, appointment_time, timezone, called_yet
         FROM patients
+        ORDER BY patient_id ASC
     """
     )
-
     rows = cursor.fetchall()
     conn.close()
-
     return [dict(row) for row in rows]
 
 
 def mark_patient_as_called(patient_id: int):
-    """Updates a patient's record setting called_yet = 1 after a call execution."""
     conn = get_db_connection()
     cursor = conn.cursor()
-
     cursor.execute(
         """
         UPDATE patients
@@ -74,21 +78,17 @@ def mark_patient_as_called(patient_id: int):
     """,
         (patient_id,),
     )
-
     conn.commit()
     conn.close()
 
 
 def reset_all_patients_called_status():
-    """Resets all patients' called_yet flag back to 0 for re-testing."""
     conn = get_db_connection()
     cursor = conn.cursor()
-
     cursor.execute("""
         UPDATE patients
         SET called_yet = 0
     """)
-
     conn.commit()
     conn.close()
 
@@ -100,10 +100,8 @@ def log_call_attempt(
     decision: str,
     user_speech: str,
 ):
-    """Inserts a new call interaction log into the call_attempts table."""
     conn = get_db_connection()
     cursor = conn.cursor()
-
     cursor.execute(
         """
         INSERT INTO call_attempts (patient_id, vapi_call_id, status, decision, user_speech)
@@ -111,16 +109,13 @@ def log_call_attempt(
     """,
         (patient_id, vapi_call_id, status, decision, user_speech),
     )
-
     conn.commit()
     conn.close()
 
 
 def get_call_history() -> List[Dict]:
-    """Retrieves all recorded call attempts joined with patient names."""
     conn = get_db_connection()
     cursor = conn.cursor()
-
     cursor.execute("""
         SELECT 
             ca.call_attempt_id,
@@ -136,10 +131,8 @@ def get_call_history() -> List[Dict]:
         JOIN patients p ON ca.patient_id = p.patient_id
         ORDER BY ca.created_at DESC
     """)
-
     rows = cursor.fetchall()
     conn.close()
-
     return [dict(row) for row in rows]
 
 
@@ -151,7 +144,6 @@ def get_call_history() -> List[Dict]:
 def trigger_vapi_outbound_call(
     patient: Dict, api_key: str, phone_number_id: str
 ) -> Optional[str]:
-    """Triggers an outbound voice call via Vapi API without PlayHT voice constraints."""
     url = "https://api.vapi.ai/call/phone"
 
     headers = {
@@ -161,35 +153,36 @@ def trigger_vapi_outbound_call(
 
     patient_name = f"{patient['first_name']} {patient['last_name']}"
     first_name = patient["first_name"]
-    appt_date = patient["appointment_date"]
+
+    # Convert date format to spoken English
+    spoken_date = format_date_for_speech(patient["appointment_date"])
     appt_time = patient["appointment_time"]
 
-    # Ensure phone number formatting
+    # Phone number E.164 formatting
     raw_phone = str(patient["phone_number"]).strip()
     if not raw_phone.startswith("+"):
         raw_phone = f"+1{raw_phone}"
 
     prompt_text = (
-        f"You are calling {patient_name} to remind them of an appointment on "
-        f"{appt_date} at {appt_time}.\n\n"
-        "STEPS:\n"
-        "1. Do not repeat the initial greeting.\n"
-        "2. Listen for the customer response.\n"
-        "3. If they say 1 or confirm: Say 'Thank you, your appointment is confirmed! Goodbye!'\n"
-        "4. If they say 2 or reschedule: Say 'Thank you, our team will follow up to reschedule. Goodbye!'\n"
-        "5. Keep replies under 15 words."
+        f"You are calling {patient_name} to confirm their appointment on {spoken_date} at {appt_time}.\n\n"
+        "RULES:\n"
+        "1. Do NOT repeat the initial greeting.\n"
+        "2. Listen for their response.\n"
+        "3. If they confirm (say 1 or confirm): Say 'Thank you, your appointment is confirmed! Goodbye.' then call the endCall tool immediately.\n"
+        "4. If they reschedule (say 2 or reschedule): Say 'Thank you, our team will follow up to reschedule. Goodbye.' then call the endCall tool immediately.\n"
+        "5. Keep replies brief."
     )
 
-    # Clean payload using default Vapi voice engine
     payload = {
         "phoneNumberId": phone_number_id,
         "customer": {"number": raw_phone},
         "assistant": {
-            "firstMessage": f"Hello {first_name}, this is an automated reminder for your appointment on {appt_date} at {appt_time}. Say 1 to confirm, or say 2 to reschedule.",
+            "firstMessage": f"Hello {first_name}, this is an automated reminder for your appointment on {spoken_date} at {appt_time}. Say 1 to confirm, or say 2 to reschedule.",
             "model": {
                 "provider": "openai",
                 "model": "gpt-4o-mini",
                 "messages": [{"role": "system", "content": prompt_text}],
+                "tools": [{"type": "endCall"}],
             },
             "silenceTimeoutSeconds": 25,
             "maxDurationSeconds": 120,
@@ -202,7 +195,9 @@ def trigger_vapi_outbound_call(
             data = response.json()
             return data.get("id")
         else:
-            print(f"Error triggering call: {response.status_code} - {response.text}")
+            print(
+                f"Error triggering call for patient {patient['patient_id']}: {response.status_code} - {response.text}"
+            )
             return None
     except Exception as e:
         print(f"Exception triggering Vapi call: {e}")
@@ -210,9 +205,8 @@ def trigger_vapi_outbound_call(
 
 
 def poll_vapi_call_status(
-    vapi_call_id: str, api_key: str, max_attempts: int = 12, delay: int = 4
+    vapi_call_id: str, api_key: str, max_attempts: int = 15, delay: int = 4
 ) -> Dict:
-    """Polls Vapi API until the call is completed or reaches max retry attempts."""
     url = f"https://api.vapi.ai/call/{vapi_call_id}"
     headers = {"Authorization": f"Bearer {api_key}"}
 
@@ -273,7 +267,6 @@ def process_batch_calls(
     phone_number_id: str,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> Dict:
-    """Sequentially loops through all uncalled patients, triggers calls, logs results, and updates status."""
     pending_patients = get_pending_patients()
     total_patients = len(pending_patients)
 
@@ -320,8 +313,9 @@ def process_batch_calls(
             })
             continue
 
+        # Poll for completion
         call_result = poll_vapi_call_status(
-            vapi_call_id, api_key, max_attempts=8, delay=4
+            vapi_call_id, api_key, max_attempts=12, delay=4
         )
 
         log_call_attempt(
@@ -340,6 +334,9 @@ def process_batch_calls(
             "status": call_result["status"],
             "decision": call_result["decision"],
         })
+
+        # Buffer pause between sequential calls to ensure clean line handoff
+        time.sleep(3)
 
     return {
         "total": total_patients,
