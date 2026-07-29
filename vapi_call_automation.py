@@ -165,12 +165,12 @@ def trigger_vapi_outbound_call(
 
     prompt_text = (
         f"You are calling {patient_name} to confirm their appointment on {spoken_date} at {appt_time}.\n\n"
-        "RULES:\n"
-        "1. Do NOT repeat the initial greeting.\n"
-        "2. Listen for their response.\n"
-        "3. If they confirm (say 1 or confirm): Say 'Thank you, your appointment is confirmed! Goodbye.' then call the endCall tool immediately.\n"
-        "4. If they reschedule (say 2 or reschedule): Say 'Thank you, our team will follow up to reschedule. Goodbye.' then call the endCall tool immediately.\n"
-        "5. Keep replies brief."
+        "INSTRUCTIONS:\n"
+        "1. Do NOT greet them again.\n"
+        "2. Listen for their numerical or verbal answer (1/confirm OR 2/reschedule).\n"
+        "3. If they say 1 or confirm: Say 'Thank you, your appointment is confirmed! Have a great day and goodbye!'\n"
+        "4. If they say 2 or reschedule: Say 'Thank you, our office team will contact you to reschedule. Have a great day and goodbye!'\n"
+        "5. Keep responses concise."
     )
 
     payload = {
@@ -182,8 +182,9 @@ def trigger_vapi_outbound_call(
                 "provider": "openai",
                 "model": "gpt-4o-mini",
                 "messages": [{"role": "system", "content": prompt_text}],
-                "tools": [{"type": "endCall"}],
+                "temperature": 0.2,
             },
+            "endCallPhrases": ["goodbye", "have a great day"],
             "silenceTimeoutSeconds": 25,
             "maxDurationSeconds": 120,
         },
@@ -203,7 +204,7 @@ def trigger_vapi_outbound_call(
         print(f"Exception triggering Vapi call: {e}")
         return None
 
-
+    
 def poll_vapi_call_status(
     vapi_call_id: str, api_key: str, max_attempts: int = 15, delay: int = 4
 ) -> Dict:
