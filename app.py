@@ -93,37 +93,22 @@ with col_sched:
         )
         st.rerun()
 
-    time_options = [
-        "08:00 AM",
-        "08:30 AM",
-        "09:00 AM",
-        "09:30 AM",
-        "09:50 AM",
-        "10:00 AM",
-        "10:30 AM",
-        "11:00 AM",
-        "01:00 PM",
-        "02:00 PM",
-    ]
-    current_time_setting = get_scheduled_call_time()
-    idx = (
-        time_options.index(current_time_setting)
-        if current_time_setting in time_options
-        else 4
-    )
+    # Manual Text Entry for Scheduled Time
+    current_time_setting = get_scheduled_call_time()  # e.g. "09:50 AM"
 
-    selected_time = st.selectbox(
+    selected_time = st.text_input(
         "Target Call Time (PST):",
-        options=time_options,
-        index=idx,
+        value=current_time_setting,
+        placeholder="e.g. 09:50 AM, 2:30 PM, or 14:00",
         disabled=not new_toggle,
+        help="Type any custom time format (e.g. 9:50 AM, 10:15 AM). Press Enter to save.",
     )
 
-    if selected_time != current_time_setting:
-        set_scheduled_call_time(selected_time)
-        st.toast(f"Updated scheduled call time to {selected_time} PST.")
+    if selected_time.strip() != current_time_setting:
+        set_scheduled_call_time(selected_time.strip())
+        st.toast(f"✅ Scheduled call time updated to '{selected_time.strip()}' PST!")
         st.rerun()
-
+        
 with col_trigger:
     st.markdown("### 🚀 Manual Execution")
     st.write(

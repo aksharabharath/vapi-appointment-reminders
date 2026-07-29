@@ -3,6 +3,7 @@ import sqlite3
 import sys
 from datetime import datetime
 import pytz
+from dateutil import parser as time_parser
 from vapi_call_automation import (
     DB_PATH,
     get_scheduled_call_time,
@@ -20,34 +21,39 @@ def run_headless_daily_batch():
 
     # 1. Check if Daily Schedule is ENABLED in UI
     if not is_daily_schedule_enabled():
-        print(
-            "⏸️ Daily automated schedule is currently DISABLED in UI settings. Exiting."
-        )
+        print("⏸️ Daily schedule is currently DISABLED in UI settings. Exiting.")
         sys.exit(0)
 
-    # 2. Compare Current Time against UI Dropdown Setting
-    scheduled_time_str = get_scheduled_call_time()  # e.g., "09:50 AM"
+    # 2. Flexible Time Evaluation
+    scheduled_time_str = get_scheduled_call_time()  # Custom typed string from UI
     now_pst = datetime.now(PST_TZ)
-    current_time_str = now_pst.strftime("%I:%M %p")  # e.g., "09:50 AM"
+    current_time_str = now_pst.strftime("%I:%M %p")
 
-    print(f"⏰ UI Scheduled Time: {scheduled_time_str}")
-    print(f"🕒 Current PST Time:   {current_time_str}")
+    print(f"⏰ UI Typed Scheduled Time: '{scheduled_time_str}'")
+    print(f"🕒 Current System Time (PST): {current_time_str}")
 
-    # Parse hour and minute to allow a 10-minute execution window
-    try:
-        sched_dt = datetime.strptime(scheduled_time_str, "%I:%M %p")
-        # Check if current time is within 10 minutes of scheduled time
-        time_diff_seconds = abs((now_pst.time().hour * 3600 + now_pst.time().minute * 60) - 
-                                (sched_dt.hour * 3600 + sched_dt.minute * 60))
-        
-        # If execution is triggered manually via GitHub Actions UI, bypass time check
-        is_manual_trigger = os.getenv("GITHUB_EVENT_NAME") == "workflow_dispatch"
+    is_manual_trigger = os.getenv("GITHUB_EVENT_NAME") == "workflow_dispatch"
 
-        if time_diff_seconds > 600 and not is_manual_trigger:
-            print(f"⏳ Current time ({current_time_str}) does not match UI target ({scheduled_time_str}). Skipping execution.")
-            sys.exit(0)
-    except Exception as e:
-        print(f"Warning: Could not parse time window, proceeding with call attempt: {e}")
+    if not is_manual_trigger:
+        try:
+            # Flexible parse of user-entered string to extracting hour & minute
+            target_time = time_parser.parse(scheduled_time_str).time()
+
+            # Compare current hour & minute against target
+            target_minutes = target_time.hour * 60 + target_time.minute
+            current_minutes = now_pst.hour * 60 + now_pst.minute
+
+            time_diff = abs(target_minutes - current_minutes)
+
+            # Execution window of 10 minutes
+            if time_diff > 10:
+                print(
+                    f"⏳ Current time ({current_time_str}) does not match UI target ('{scheduled_time_str}'). Skipping execution."
+                )
+                sys.exit(0)
+
+        except Exception as e:
+            print(f"⚠️ Warning: Could not parse typed time string '{scheduled_time_str}': {e}. Executing batch as fallback.")
 
     api_key = os.getenv("VAPI_API_KEY")
     phone_number_id = os.getenv("VAPI_PHONE_NUMBER_ID")
@@ -57,7 +63,7 @@ def run_headless_daily_batch():
         sys.exit(1)
 
     # 3. Execute Batch Calls
-    print("🚀 Time matches UI setting! Initiating batch call process...")
+    print("🚀 Time match confirmed! Executing batch calls...")
     try:
         summary = process_batch_calls(
             api_key=api_key,
@@ -66,9 +72,7 @@ def run_headless_daily_batch():
         )
         print("--------------------------------------------------")
         print("🎉 BATCH COMPLETE!")
-        print(
-            f"Total: {summary['total']} | Successful: {summary['successful']} | Failed: {summary['failed']}"
-        )
+        print(f"Total: {summary['total']} | Successful: {summary['successful']} | Failed: {summary['failed']}")
         print("--------------------------------------------------")
 
         conn = sqlite3.connect(DB_PATH)
