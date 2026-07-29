@@ -192,7 +192,7 @@ with tab3:
                 "Patient Name": f"{h['first_name']} {h['last_name']}",
                 "Status": h["status"],
                 "Decision": h["decision"],
-                "Transcript / Response": h["user_speech"],
+                "Response": h["user_speech"],  # Updated column name
                 "Timestamp": h["created_at"],
             })
         st.dataframe(formatted_history, use_container_width=True)

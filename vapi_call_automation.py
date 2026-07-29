@@ -232,7 +232,6 @@ def poll_vapi_call_status(
                 ended_reason = data.get("endedReason", "")
 
                 if status in ["ended", "completed"]:
-                    transcript = data.get("transcript", "")
                     messages = data.get("messages", [])
 
                     # Check if Vapi flagged call as voicemail
@@ -240,16 +239,22 @@ def poll_vapi_call_status(
                         return {
                             "status": "COMPLETED",
                             "decision": "VOICEMAIL",
-                            "user_speech": "Voicemail detected - left automated message.",
+                            "user_speech": "[Voicemail - Left Message]",
                         }
 
-                    patient_speech = ""
-                    for msg in messages:
-                        if msg.get("role") == "user":
-                            patient_speech += f" {msg.get('content', '')}"
+                    # Filter EXCLUSIVELY for user responses (ignore assistant messages)
+                    user_responses = [
+                        msg.get("content", "").strip()
+                        for msg in messages
+                        if msg.get("role") == "user" and msg.get("content")
+                    ]
 
-                    patient_speech = patient_speech.strip() or transcript
+                    # Take the user's final response line
+                    patient_speech = (
+                        user_responses[-1] if user_responses else ""
+                    )
 
+                    # Determine outcome classification
                     decision = "NO_INPUT"
                     if "1" in patient_speech or "confirm" in patient_speech.lower():
                         decision = "CONFIRMED"
@@ -264,7 +269,7 @@ def poll_vapi_call_status(
                     return {
                         "status": "COMPLETED",
                         "decision": decision,
-                        "user_speech": patient_speech,
+                        "user_speech": patient_speech or "No response detected",
                     }
 
             time.sleep(delay)
@@ -277,7 +282,6 @@ def poll_vapi_call_status(
         "decision": "NO_INPUT",
         "user_speech": "Call timed out or was unanswered.",
     }
-
 
 # ==========================================
 # 3. BATCH PROCESSOR FOR UNCALLED PATIENTS
