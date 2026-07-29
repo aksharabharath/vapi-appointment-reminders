@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import subprocess
 import time
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
@@ -9,6 +10,24 @@ import requests
 # SQLite Database File Path
 DB_PATH = "patients.db"
 PST_TZ = pytz.timezone("America/Los_Angeles")
+
+
+def auto_commit_db_to_git(commit_message: str = "Auto-update patients.db"):
+    """Pushes local SQLite database changes back to GitHub so data persists across refreshes."""
+    try:
+        # Check if running in Git repository environment
+        subprocess.run(["git", "add", DB_PATH], check=True)
+        # Commit only if there are database changes
+        result = subprocess.run(
+            ["git", "commit", "-m", f"DB: {commit_message}"],
+            capture_output=True,
+            text=True,
+        )
+        if "nothing to commit" not in result.stdout:
+            subprocess.run(["git", "push"], check=True)
+            print(f"✅ Automatically pushed {DB_PATH} updates to GitHub.")
+    except Exception as e:
+        print(f"Note: Git auto-push skipped or unavailable: {e}")
 
 
 def get_pst_now_str() -> str:
@@ -144,6 +163,7 @@ def reset_all_patients_called_status():
     """)
     conn.commit()
     conn.close()
+    auto_commit_db_to_git("Reset all patients called_yet to 0")
 
 
 def log_call_attempt(
@@ -418,6 +438,9 @@ def process_batch_calls(
         })
 
         time.sleep(3)
+
+    # Automatically commit and push patients.db changes to GitHub
+    auto_commit_db_to_git("Log batch call attempts and patient status updates")
 
     return {
         "total": total_patients,
