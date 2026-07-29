@@ -7,7 +7,7 @@ import requests
 # SQLite Database File Path
 DB_PATH = "patients.db"
 
-# Default API Configuration (overridden dynamically via function arguments)
+# Default API Configuration
 DEFAULT_VAPI_API_KEY = os.getenv("VAPI_API_KEY", "")
 DEFAULT_VAPI_PHONE_NUMBER_ID = os.getenv("VAPI_PHONE_NUMBER_ID", "")
 
@@ -29,7 +29,6 @@ def get_pending_patients() -> List[Dict]:
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Query patients where called_yet is 0 or False
     cursor.execute(
         """
         SELECT patient_id, first_name, last_name, phone_number, appointment_date, appointment_time, timezone
@@ -81,7 +80,7 @@ def mark_patient_as_called(patient_id: int):
 
 
 def reset_all_patients_called_status():
-    """Resets all patients' called_yet flag back to 0 (useful for testing/demo batch runs)."""
+    """Resets all patients' called_yet flag back to 0 for re-testing."""
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -118,7 +117,7 @@ def log_call_attempt(
 
 
 def get_call_history() -> List[Dict]:
-    """Retrieves all recorded call attempts joined with patient names for display in UI."""
+    """Retrieves all recorded call attempts joined with patient names."""
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -152,7 +151,7 @@ def get_call_history() -> List[Dict]:
 def trigger_vapi_outbound_call(
     patient: Dict, api_key: str, phone_number_id: str
 ) -> Optional[str]:
-    """Triggers an outbound voice call via Vapi API for a given patient dict."""
+    """Triggers an outbound voice call via Vapi API without PlayHT voice constraints."""
     url = "https://api.vapi.ai/call/phone"
 
     headers = {
@@ -165,44 +164,41 @@ def trigger_vapi_outbound_call(
     appt_date = patient["appointment_date"]
     appt_time = patient["appointment_time"]
 
-    # Updated system prompt that waits for user response before ending
+    # Ensure phone number formatting
+    raw_phone = str(patient["phone_number"]).strip()
+    if not raw_phone.startswith("+"):
+        raw_phone = f"+1{raw_phone}"
+
     prompt_text = (
-        f"You are calling {patient_name} to remind them about their appointment on "
+        f"You are calling {patient_name} to remind them of an appointment on "
         f"{appt_date} at {appt_time}.\n\n"
-        "STEPS TO FOLLOW:\n"
-        "1. Do not greet them again (the initial message already greeted them).\n"
-        "2. Listen for their response.\n"
-        "3. If they say 1 or confirm: Say 'Thank you! Your appointment is confirmed. Goodbye!' and end the conversation.\n"
-        "4. If they say 2 or want to reschedule: Say 'Thank you! A staff member will follow up to reschedule. Goodbye!' and end the conversation.\n"
-        "5. Keep responses extremely short (under 15 words)."
+        "STEPS:\n"
+        "1. Do not repeat the initial greeting.\n"
+        "2. Listen for the customer response.\n"
+        "3. If they say 1 or confirm: Say 'Thank you, your appointment is confirmed! Goodbye!'\n"
+        "4. If they say 2 or reschedule: Say 'Thank you, our team will follow up to reschedule. Goodbye!'\n"
+        "5. Keep replies under 15 words."
     )
 
+    # Clean payload using default Vapi voice engine
     payload = {
         "phoneNumberId": phone_number_id,
-        "customer": {"number": patient["phone_number"]},
+        "customer": {"number": raw_phone},
         "assistant": {
-            "firstMessage": f"Hello {first_name}, this is an automated reminder for your appointment on {appt_date} at {appt_time}. Please say 1 to confirm, or say 2 to reschedule.",
+            "firstMessage": f"Hello {first_name}, this is an automated reminder for your appointment on {appt_date} at {appt_time}. Say 1 to confirm, or say 2 to reschedule.",
             "model": {
                 "provider": "openai",
                 "model": "gpt-4o-mini",
                 "messages": [{"role": "system", "content": prompt_text}],
-                "temperature": 0.3,
             },
-            "voice": {"provider": "playht", "voiceId": "jennifer"},
-            "endCallPhrases": [
-                "Goodbye!",
-                "Have a great day!",
-                "Your appointment is confirmed. Goodbye!",
-                "A staff member will follow up to reschedule. Goodbye!",
-            ],
-            "silenceTimeoutSeconds": 20,
+            "silenceTimeoutSeconds": 25,
             "maxDurationSeconds": 120,
         },
     }
 
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=15)
-        if response.status_code == 201:
+        if response.status_code in [200, 201]:
             data = response.json()
             return data.get("id")
         else:
@@ -212,8 +208,9 @@ def trigger_vapi_outbound_call(
         print(f"Exception triggering Vapi call: {e}")
         return None
 
+
 def poll_vapi_call_status(
-    vapi_call_id: str, api_key: str, max_attempts: int = 12, delay: int = 5
+    vapi_call_id: str, api_key: str, max_attempts: int = 12, delay: int = 4
 ) -> Dict:
     """Polls Vapi API until the call is completed or reaches max retry attempts."""
     url = f"https://api.vapi.ai/call/{vapi_call_id}"
@@ -227,11 +224,9 @@ def poll_vapi_call_status(
                 status = data.get("status")
 
                 if status in ["ended", "completed"]:
-                    # Parse transcript / response
                     transcript = data.get("transcript", "")
                     messages = data.get("messages", [])
 
-                    # Extract patient speech from message transcript if available
                     patient_speech = ""
                     for msg in messages:
                         if msg.get("role") == "user":
@@ -239,7 +234,6 @@ def poll_vapi_call_status(
 
                     patient_speech = patient_speech.strip() or transcript
 
-                    # Determine decision output
                     decision = "NO_INPUT"
                     if "1" in patient_speech or "confirm" in patient_speech.lower():
                         decision = "CONFIRMED"
@@ -279,16 +273,7 @@ def process_batch_calls(
     phone_number_id: str,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> Dict:
-    """Sequentially loops through all uncalled patients, triggers calls, logs results, and updates status.
-
-    Parameters:
-        api_key: Vapi API key
-        phone_number_id: Vapi Phone Number ID
-        progress_callback: Optional function callback(current_index, total_count, status_message) for UI updates.
-
-    Returns:
-        Summary dict containing execution metrics.
-    """
+    """Sequentially loops through all uncalled patients, triggers calls, logs results, and updates status."""
     pending_patients = get_pending_patients()
     total_patients = len(pending_patients)
 
@@ -314,13 +299,11 @@ def process_batch_calls(
                 idx, total_patients, f"Calling {patient_name} ({idx}/{total_patients})..."
             )
 
-        # 1. Trigger Vapi Call
         vapi_call_id = trigger_vapi_outbound_call(
             patient, api_key, phone_number_id
         )
 
         if not vapi_call_id:
-            # Handle API trigger failure gracefully
             log_call_attempt(
                 patient_id=patient_id,
                 vapi_call_id="FAILED_TRIGGER",
@@ -337,12 +320,10 @@ def process_batch_calls(
             })
             continue
 
-        # 2. Poll for call completion & extract transcript
         call_result = poll_vapi_call_status(
             vapi_call_id, api_key, max_attempts=8, delay=4
         )
 
-        # 3. Log attempt outcome to database
         log_call_attempt(
             patient_id=patient_id,
             vapi_call_id=vapi_call_id,
@@ -351,7 +332,6 @@ def process_batch_calls(
             user_speech=call_result["user_speech"],
         )
 
-        # 4. Mark patient as called in patients table
         mark_patient_as_called(patient_id)
 
         successful += 1
