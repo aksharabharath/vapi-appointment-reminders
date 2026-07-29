@@ -3,10 +3,17 @@ import sqlite3
 import time
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
+import pytz
 import requests
 
 # SQLite Database File Path
 DB_PATH = "patients.db"
+PST_TZ = pytz.timezone("America/Los_Angeles")
+
+
+def get_pst_now_str() -> str:
+    """Returns current date and time formatted in PST/PDT string."""
+    return datetime.now(PST_TZ).strftime("%Y-%m-%d %I:%M:%S %p PST")
 
 
 def format_date_for_speech(raw_date_str: str) -> str:
@@ -14,7 +21,6 @@ def format_date_for_speech(raw_date_str: str) -> str:
     try:
         dt = datetime.strptime(str(raw_date_str).strip(), "%Y-%m-%d")
         day = dt.day
-        # Add ordinal suffix (1st, 2nd, 3rd, 4th...)
         suffix = (
             "th"
             if 11 <= day <= 13
@@ -102,12 +108,21 @@ def log_call_attempt(
 ):
     conn = get_db_connection()
     cursor = conn.cursor()
+    pst_timestamp = get_pst_now_str()
+
     cursor.execute(
         """
-        INSERT INTO call_attempts (patient_id, vapi_call_id, status, decision, user_speech)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO call_attempts (patient_id, vapi_call_id, status, decision, user_speech, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
     """,
-        (patient_id, vapi_call_id, status, decision, user_speech),
+        (
+            patient_id,
+            vapi_call_id,
+            status,
+            decision,
+            user_speech,
+            pst_timestamp,
+        ),
     )
     conn.commit()
     conn.close()
@@ -129,7 +144,7 @@ def get_call_history() -> List[Dict]:
             ca.created_at
         FROM call_attempts ca
         JOIN patients p ON ca.patient_id = p.patient_id
-        ORDER BY ca.created_at DESC
+        ORDER BY ca.call_attempt_id DESC
     """)
     rows = cursor.fetchall()
     conn.close()
@@ -153,12 +168,9 @@ def trigger_vapi_outbound_call(
 
     patient_name = f"{patient['first_name']} {patient['last_name']}"
     first_name = patient["first_name"]
-
-    # Convert date format to spoken English
     spoken_date = format_date_for_speech(patient["appointment_date"])
     appt_time = patient["appointment_time"]
 
-    # Phone number E.164 formatting
     raw_phone = str(patient["phone_number"]).strip()
     if not raw_phone.startswith("+"):
         raw_phone = f"+1{raw_phone}"
@@ -177,10 +189,8 @@ def trigger_vapi_outbound_call(
         "phoneNumberId": phone_number_id,
         "customer": {"number": raw_phone},
         "assistant": {
-            # Greeting for live humans
             "firstMessage": f"Hello {first_name}, this is an automated reminder for your appointment on {spoken_date} at {appt_time}. Say 1 to confirm, or say 2 to reschedule.",
-            # Dedicated non-interactive voicemail drop
-            "voicemailMessage": f"Hello {first_name}, this is an automated reminder from Dr. Office regarding your upcoming appointment on {spoken_date} at {appt_time}. Please call our office back at your earliest convenience to confirm. Thank you!",
+            "voicemailMessage": f"Hello {first_name}, this is an automated reminder regarding your appointment on {spoken_date} at {appt_time}. Please call our office back to confirm. Thank you!",
             "voicemailDetection": {
                 "provider": "vapi",
                 "backoffPlan": {
@@ -216,7 +226,7 @@ def trigger_vapi_outbound_call(
         print(f"Exception triggering Vapi call: {e}")
         return None
 
-        
+
 def poll_vapi_call_status(
     vapi_call_id: str, api_key: str, max_attempts: int = 15, delay: int = 4
 ) -> Dict:
@@ -234,7 +244,6 @@ def poll_vapi_call_status(
                 if status in ["ended", "completed"]:
                     messages = data.get("messages", [])
 
-                    # Check if Vapi flagged call as voicemail
                     if "voicemail" in ended_reason.lower():
                         return {
                             "status": "COMPLETED",
@@ -242,19 +251,16 @@ def poll_vapi_call_status(
                             "user_speech": "[Voicemail - Left Message]",
                         }
 
-                    # Filter EXCLUSIVELY for user responses (ignore assistant messages)
                     user_responses = [
                         msg.get("content", "").strip()
                         for msg in messages
                         if msg.get("role") == "user" and msg.get("content")
                     ]
 
-                    # Take the user's final response line
                     patient_speech = (
                         user_responses[-1] if user_responses else ""
                     )
 
-                    # Determine outcome classification
                     decision = "NO_INPUT"
                     if "1" in patient_speech or "confirm" in patient_speech.lower():
                         decision = "CONFIRMED"
@@ -282,6 +288,7 @@ def poll_vapi_call_status(
         "decision": "NO_INPUT",
         "user_speech": "Call timed out or was unanswered.",
     }
+
 
 # ==========================================
 # 3. BATCH PROCESSOR FOR UNCALLED PATIENTS
@@ -325,7 +332,6 @@ def process_batch_calls(
         )
 
         if not vapi_call_id:
-            # Failed trigger -> keep called_yet = 0
             log_call_attempt(
                 patient_id=patient_id,
                 vapi_call_id="FAILED_TRIGGER",
@@ -341,12 +347,10 @@ def process_batch_calls(
             })
             continue
 
-        # Poll Vapi for call status & decision
         call_result = poll_vapi_call_status(
             vapi_call_id, api_key, max_attempts=12, delay=4
         )
 
-        # Log the attempt outcome
         log_call_attempt(
             patient_id=patient_id,
             vapi_call_id=vapi_call_id,
@@ -355,7 +359,7 @@ def process_batch_calls(
             user_speech=call_result["user_speech"],
         )
 
-        # STRICT RULE: Only set called_yet = 1 if CONFIRMED or RESCHEDULE
+        # STRICT RULE: Only mark called_yet = 1 if CONFIRMED or RESCHEDULE
         if call_result["decision"] in ["CONFIRMED", "RESCHEDULE"]:
             mark_patient_as_called(patient_id)
 
