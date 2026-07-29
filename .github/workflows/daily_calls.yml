@@ -1,10 +1,9 @@
 name: Dynamic Daily Automated Batch Appointment Calls
 
 on:
-  schedule:
-    # Checks every 15 minutes between 8 AM - 5 PM Pacific Time
-    - cron: '*/15 15-23 * * *'
-  workflow_dispatch: # Allows manual override trigger from UI anytime
+  repository_dispatch:
+    types: [trigger_vapi_calls]
+  workflow_dispatch: # Allows manual trigger anytime from GitHub UI
 
 jobs:
   run-batch-calls:
@@ -30,6 +29,7 @@ jobs:
         env:
           VAPI_API_KEY: ${{ secrets.VAPI_API_KEY }}
           VAPI_PHONE_NUMBER_ID: ${{ secrets.VAPI_PHONE_NUMBER_ID }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
           python run_daily_batch.py
 

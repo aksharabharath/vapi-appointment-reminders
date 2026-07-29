@@ -25,25 +25,39 @@ def run_headless_daily_batch():
         )
         sys.exit(0)
 
-    # 2. Check Operator Scheduled Time against Current PST Time
+    # 2. Compare Current Time against UI Dropdown Setting
     scheduled_time_str = get_scheduled_call_time()  # e.g., "09:50 AM"
     now_pst = datetime.now(PST_TZ)
     current_time_str = now_pst.strftime("%I:%M %p")  # e.g., "09:50 AM"
 
-    print(
-        f"⏰ Operator Scheduled Time: {scheduled_time_str} | Current Time: {current_time_str} PST"
-    )
+    print(f"⏰ UI Scheduled Time: {scheduled_time_str}")
+    print(f"🕒 Current PST Time:   {current_time_str}")
+
+    # Parse hour and minute to allow a 10-minute execution window
+    try:
+        sched_dt = datetime.strptime(scheduled_time_str, "%I:%M %p")
+        # Check if current time is within 10 minutes of scheduled time
+        time_diff_seconds = abs((now_pst.time().hour * 3600 + now_pst.time().minute * 60) - 
+                                (sched_dt.hour * 3600 + sched_dt.minute * 60))
+        
+        # If execution is triggered manually via GitHub Actions UI, bypass time check
+        is_manual_trigger = os.getenv("GITHUB_EVENT_NAME") == "workflow_dispatch"
+
+        if time_diff_seconds > 600 and not is_manual_trigger:
+            print(f"⏳ Current time ({current_time_str}) does not match UI target ({scheduled_time_str}). Skipping execution.")
+            sys.exit(0)
+    except Exception as e:
+        print(f"Warning: Could not parse time window, proceeding with call attempt: {e}")
 
     api_key = os.getenv("VAPI_API_KEY")
     phone_number_id = os.getenv("VAPI_PHONE_NUMBER_ID")
 
     if not api_key or not phone_number_id:
-        print(
-            "❌ ERROR: Missing VAPI_API_KEY or VAPI_PHONE_NUMBER_ID in environment variables."
-        )
+        print("❌ ERROR: Missing VAPI_API_KEY or VAPI_PHONE_NUMBER_ID.")
         sys.exit(1)
 
     # 3. Execute Batch Calls
+    print("🚀 Time matches UI setting! Initiating batch call process...")
     try:
         summary = process_batch_calls(
             api_key=api_key,
