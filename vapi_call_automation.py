@@ -325,7 +325,7 @@ def process_batch_calls(
         )
 
         if not vapi_call_id:
-            # Failed to place call -> Keep called_yet = 0 so they can be retried later
+            # Failed trigger -> keep called_yet = 0
             log_call_attempt(
                 patient_id=patient_id,
                 vapi_call_id="FAILED_TRIGGER",
@@ -341,12 +341,12 @@ def process_batch_calls(
             })
             continue
 
-        # Poll Vapi for call results
+        # Poll Vapi for call status & decision
         call_result = poll_vapi_call_status(
             vapi_call_id, api_key, max_attempts=12, delay=4
         )
 
-        # Always log the attempt interaction
+        # Log the attempt outcome
         log_call_attempt(
             patient_id=patient_id,
             vapi_call_id=vapi_call_id,
@@ -355,11 +355,8 @@ def process_batch_calls(
             user_speech=call_result["user_speech"],
         )
 
-        # CONDITIONAL UPDATE: Only set called_yet = 1 if the patient interacted or received a voicemail
-        # If decision is NO_INPUT or ERROR, keep called_yet = 0 so they stay in pending queue
-        valid_completion_decisions = ["CONFIRMED", "RESCHEDULE", "VOICEMAIL"]
-
-        if call_result["decision"] in valid_completion_decisions:
+        # STRICT RULE: Only set called_yet = 1 if CONFIRMED or RESCHEDULE
+        if call_result["decision"] in ["CONFIRMED", "RESCHEDULE"]:
             mark_patient_as_called(patient_id)
 
         successful += 1
@@ -369,7 +366,6 @@ def process_batch_calls(
             "decision": call_result["decision"],
         })
 
-        # Brief pause between calls
         time.sleep(3)
 
     return {
