@@ -14,9 +14,10 @@ from vapi_call_automation import (
 )
 
 st.set_page_config(
-    page_title="Batch Patient Reminder System",
+    page_title="AI Appointment Assistant",
     page_icon="📞",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
 
@@ -32,7 +33,10 @@ def get_secret(key_name: str) -> str:
 VAPI_API_KEY = get_secret("VAPI_API_KEY")
 VAPI_PHONE_NUMBER_ID = get_secret("VAPI_PHONE_NUMBER_ID")
 
-st.title("📞 Batch AI Appointment Reminder System")
+# ==========================================
+# 1. HEADER & APP TITLE
+# ==========================================
+st.title("AI Appointment Assistant — Intelligent Voice Workflow Automation")
 st.caption(
     f"Automated outbound voice assistant | Current Time: **{get_pst_now_str()}**"
 )
@@ -43,6 +47,7 @@ if not VAPI_API_KEY or not VAPI_PHONE_NUMBER_ID:
     )
     st.stop()
 
+# Load DB records
 pending_patients = get_pending_patients()
 all_patients = get_all_patients()
 call_history = get_call_history()
@@ -51,6 +56,7 @@ pending_count = len(pending_patients)
 total_count = len(all_patients)
 called_count = total_count - pending_count
 
+# Metrics Dashboard
 m1, m2, m3 = st.columns(3)
 m1.metric("Pending Calls", pending_count)
 m2.metric("Already Called", called_count)
@@ -59,47 +65,33 @@ m3.metric("Total Patients in Roster", total_count)
 st.divider()
 
 # ==========================================
-# SIDEBAR CONTROLS (WITH SCHEDULE TOGGLE)
+# 2. SCHEDULE TOGGLE (PLACED AT TOP)
 # ==========================================
-with st.sidebar:
-    st.header("⚙️ Automation Settings")
+st.subheader("Automated Daily Schedule")
+current_schedule_state = is_daily_schedule_enabled()
+new_schedule_state = st.toggle(
+    "Enable Automated Daily 8:00 AM PST Call Batch",
+    value=current_schedule_state,
+    help="When enabled, the system will automatically run batch calls every morning at 8:00 AM PST for all pending patients.",
+)
 
-    # Interactive Toggle for 8:00 AM PST Daily Schedule
-    current_schedule_state = is_daily_schedule_enabled()
-    new_schedule_state = st.toggle(
-        "⏰ Automated Daily 8:00 AM PST Calls",
-        value=current_schedule_state,
-        help="When turned ON, the system automatically triggers batch calls every day at 8:00 AM PST for all pending patients.",
+if new_schedule_state != current_schedule_state:
+    set_daily_schedule_enabled(new_schedule_state)
+    st.success(
+        f"Schedule updated: {'Enabled (Active at 8 AM PST)' if new_schedule_state else 'Disabled'}"
     )
+    st.rerun()
 
-    if new_schedule_state != current_schedule_state:
-        set_daily_schedule_enabled(new_schedule_state)
-        st.success(
-            f"Schedule updated: {'Enabled (Active at 8 AM PST)' if new_schedule_state else 'Disabled'}"
-        )
-        st.rerun()
-
-    st.markdown("---")
-    st.header("🔄 Admin Utilities")
-
-    if st.button("Reset All Patients to 'Uncalled'", use_container_width=True):
-        reset_all_patients_called_status()
-        st.success("All patient records set to `called_yet = False`!")
-        st.rerun()
-
-    st.markdown("---")
-    st.write(f"**Database:** `patients.db` (SQLite)")
-    st.write(f"**Timezone:** US / Pacific (PST)")
-
+st.divider()
 
 # ==========================================
-# BATCH CALL EXECUTION SECTION
+# 3. BATCH CALL TRIGGER SECTION
 # ==========================================
-st.subheader("🚀 Manual Batch Call Trigger")
+st.subheader("Manual Batch Call Trigger")
 
 if pending_count == 0:
     st.info(
-        "🎉 **All patients have already been called!** Click 'Reset All Patients' in the sidebar to re-run a batch test."
+        "🎉 **All patients have already been called!** Click 'Reset All Patients' below if you want to re-run a batch test."
     )
 else:
     st.write(
@@ -135,7 +127,7 @@ else:
 st.divider()
 
 # ==========================================
-# DATA TABLES & MONITORING
+# 4. DATA TABLES & MONITORING
 # ==========================================
 tab1, tab2, tab3 = st.tabs([
     "📋 Pending Queue",
@@ -191,3 +183,16 @@ with tab3:
                 "Timestamp (PST)": h["created_at"],
             })
         st.dataframe(formatted_history, use_container_width=True)
+
+st.divider()
+
+# ==========================================
+# 5. ADMIN UTILITIES (MOVED TO BOTTOM)
+# ==========================================
+st.subheader("⚙️ Admin Utilities")
+st.write("Use this utility to reset all patient call statuses for re-testing.")
+
+if st.button("🔄 Reset All Patients to 'Uncalled'"):
+    reset_all_patients_called_status()
+    st.success("All patient records set to `called_yet = False`!")
+    st.rerun()
