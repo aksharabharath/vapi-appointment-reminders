@@ -4,7 +4,7 @@ import requests
 import streamlit as st
 
 def push_file_to_github(file_path="scheduled_time.txt", commit_message="Update target call time"):
-    """Programmatically commits and pushes a file to GitHub repository via REST API (No SSH needed)."""
+    """Programmatically commits/updates a file in GitHub repository via REST API."""
     token = os.getenv("GITHUB_PAT") or st.secrets.get("GITHUB_PAT")
     repo = os.getenv("GITHUB_REPO") or st.secrets.get("GITHUB_REPO", "aksharabharath/vapi-appointment-reminders")
 
@@ -18,7 +18,7 @@ def push_file_to_github(file_path="scheduled_time.txt", commit_message="Update t
         "Accept": "application/vnd.github.v3+json",
     }
 
-    # 1. Get current file SHA (required by GitHub API to update an existing file)
+    # 1. Check if the file exists on GitHub to get its SHA
     get_resp = requests.get(url, headers=headers)
     sha = get_resp.json().get("sha") if get_resp.status_code == 200 else None
 
@@ -32,7 +32,7 @@ def push_file_to_github(file_path="scheduled_time.txt", commit_message="Update t
 
     encoded_content = base64.b64encode(content.encode("utf-8")).decode("utf-8")
 
-    # 3. HTTP PUT Request (Commits directly to GitHub over HTTPS)
+    # 3. Payload handles both Creation (no sha) and Update (with sha)
     payload = {
         "message": commit_message,
         "content": encoded_content,
