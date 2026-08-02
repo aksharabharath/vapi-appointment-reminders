@@ -1,6 +1,7 @@
 from datetime import datetime
 import pytz
 import streamlit as st
+from backend.github_sync import push_file_to_github
 from vapi_call_automation import (
     DB_PATH,
     get_all_patients,
@@ -187,3 +188,22 @@ with st.expander("🛠️ Admin Utilities"):
         reset_all_patients_called_status()
         st.success("All patient statuses reset to pending.")
         st.rerun()
+
+# Example Streamlit Form or Input for Target Time
+new_target_time = st.text_input("Target Call Time (PST):", value="07:50 PM")
+
+if st.button("Save & Sync Schedule"):
+    # 1. Save time locally to file or SQLite
+    with open("scheduled_time.txt", "w") as f:
+        f.write(new_target_time.strip())
+
+    # 2. Auto-commit and push to GitHub so GitHub Actions picks it up!
+    with st.spinner("Syncing scheduled time to GitHub..."):
+        success = push_file_to_github(
+            file_path="scheduled_time.txt",
+            commit_message=f"Update target time to {new_target_time.strip()}",
+        )
+        if success:
+            st.success(
+                f"✅ Scheduled time ({new_target_time}) saved and synced to GitHub!"
+            )
