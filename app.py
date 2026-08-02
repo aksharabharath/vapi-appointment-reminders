@@ -129,30 +129,23 @@ with col_sched:
         type="secondary",
         width="stretch",
     ):
-        # 1. Save locally in memory/database helper
-        set_scheduled_call_time(full_selected_time)
-
-        # 2. Write locally to disk
-        with open("scheduled_time.txt", "w") as f:
-            f.write(full_selected_time)
-
-        # 3. Push to GitHub REST API
-        with st.spinner("Pushing schedule to GitHub repository..."):
+        with st.spinner("Syncing schedule directly to GitHub..."):
+            # Push string directly to GitHub
             success = push_file_to_github(
+                file_content=full_selected_time,
                 file_path="scheduled_time.txt",
-                commit_message=f"Update target call time to '{full_selected_time}'",
+                commit_message=f"Update scheduled time to '{full_selected_time}'",
             )
 
         if success:
+            # Keep setting saved in local session memory
+            st.session_state["override_time"] = full_selected_time
+            set_scheduled_call_time(full_selected_time)
             st.success(
-                f"✅ Saved! Target call time set to '{full_selected_time}' PST and synced to GitHub."
+                f"✅ Target call time set to '{full_selected_time}' PST and synced to GitHub!"
             )
         else:
-            st.error(
-                "❌ Failed to push to GitHub. Verify `GITHUB_PAT` and `GITHUB_REPO` in Streamlit Secrets."
-            )
-
-        st.rerun()
+            st.error("❌ Sync failed. Please check Streamlit Cloud Secrets.")
 
 with col_trigger:
     st.markdown("### 📞 Manual Execution")

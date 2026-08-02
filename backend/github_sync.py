@@ -5,9 +5,11 @@ import streamlit as st
 
 
 def push_file_to_github(
-    file_path="scheduled_time.txt", commit_message="Update target call time"
+    file_content: str,
+    file_path="scheduled_time.txt",
+    commit_message="Update target call time",
 ):
-    """Programmatically updates a file in GitHub repository via REST API with complete error catching."""
+    """Programmatically updates a file directly on GitHub via REST API."""
     try:
         token = os.getenv("GITHUB_PAT") or st.secrets.get("GITHUB_PAT")
         repo = os.getenv("GITHUB_REPO") or st.secrets.get(
@@ -16,7 +18,7 @@ def push_file_to_github(
 
         if not token:
             st.error(
-                "❌ `GITHUB_PAT` missing. Add it to Streamlit App Settings -> Secrets."
+                "❌ GITHUB_PAT is missing from Streamlit Secrets. Please add it to Secrets!"
             )
             return False
 
@@ -26,33 +28,16 @@ def push_file_to_github(
             "Accept": "application/vnd.github.v3+json",
         }
 
-        # 1. Fetch current file SHA if it exists
+        # 1. Fetch current file SHA if it exists on GitHub
         get_resp = requests.get(url, headers=headers, timeout=10)
+        sha = get_resp.json().get("sha") if get_resp.status_code == 200 else None
 
-        sha = None
-        if get_resp.status_code == 200:
-            sha = get_resp.json().get("sha")
-        elif get_resp.status_code == 401:
-            st.error("❌ GitHub Authentication Failed: Invalid `GITHUB_PAT`.")
-            return False
-        elif get_resp.status_code == 404:
-            st.info(
-                f"ℹ️ File `{file_path}` not found on GitHub. Creating it now..."
-            )
+        # 2. Base64 encode the string directly
+        encoded_content = base64.b64encode(
+            file_content.strip().encode("utf-8")
+        ).decode("utf-8")
 
-        # 2. Read local content
-        if not os.path.exists(file_path):
-            st.error(f"❌ Local file `{file_path}` does not exist.")
-            return False
-
-        with open(file_path, "r") as f:
-            content = f.read()
-
-        encoded_content = base64.b64encode(content.encode("utf-8")).decode(
-            "utf-8"
-        )
-
-        # 3. PUT payload
+        # 3. Payload
         payload = {
             "message": commit_message,
             "content": encoded_content,
@@ -67,10 +52,10 @@ def push_file_to_github(
             return True
         else:
             st.error(
-                f"❌ GitHub API Error ({put_resp.status_code}): {put_resp.json().get('message')}"
+                f"❌ GitHub REST Error ({put_resp.status_code}): {put_resp.json().get('message')}"
             )
             return False
 
     except Exception as e:
-        st.error(f"❌ Sync Exception: {str(e)}")
+        st.error(f"❌ Exception pushing to GitHub: {str(e)}")
         return False
