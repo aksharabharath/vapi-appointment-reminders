@@ -2,18 +2,19 @@ name: Dynamic Daily Automated Batch Appointment Calls
 
 on:
   schedule:
-    # Runs every 10 minutes
+    # Runs every 10 minutes to match PST schedule triggers
     - cron: '*/10 * * * *'
-  workflow_dispatch:
+  workflow_dispatch: # Allows manual trigger from GitHub Actions tab
 
 jobs:
   run-batch-calls:
     runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
-          # Token with write access to push DB updates back to main
+          # Uses PAT token with write access to push DB updates back to main
           token: ${{ secrets.GITHUB_PAT }}
 
       - name: Set up Python
@@ -33,11 +34,21 @@ jobs:
         run: |
           python run_daily_batch.py
 
-      - name: Commit and push updated database back to repository
-        if: always() # Run even if calls had partial failures
+      - name: Commit and push updated database to repository
+        if: always() # Executes even if there were call script warnings
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Stage database files if modified
           git add appointment_reminders.db || true
           git add call_history.db || true
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update DB after daily call batch [skip ci]" && git push origin main)
+
+          # Check for staged changes and push safely
+          if ! git diff --staged --quiet; then
+            git commit -m "Auto-update database after daily call batch [skip ci]"
+            git pull --rebase origin main
+            git push origin main
+          else
+            echo "No database changes to commit."
+          fi
