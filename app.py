@@ -92,7 +92,13 @@ with col_sched:
         st.rerun()
 
     # Load target call time from helper/file
-    current_time_setting = get_scheduled_call_time() or "12:50 PM"
+# Check session state first, then fallback to file helper
+    if "current_time_setting" not in st.session_state:
+        st.session_state["current_time_setting"] = (
+            get_scheduled_call_time() or "01:00 PM"
+        )
+
+    current_time_setting = st.session_state["current_time_setting"]
 
     # Safely extract digits and AM/PM
     parts = current_time_setting.split()
@@ -138,9 +144,10 @@ with col_sched:
             )
 
         if success:
-            # Keep setting saved in local session memory
-            st.session_state["override_time"] = full_selected_time
+            # Update session state memory so UI doesn't revert to 09:50 AM
+            st.session_state["current_time_setting"] = full_selected_time
             set_scheduled_call_time(full_selected_time)
+
             st.success(
                 f"✅ Target call time set to '{full_selected_time}' PST and synced to GitHub!"
             )

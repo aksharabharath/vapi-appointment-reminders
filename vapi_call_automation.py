@@ -565,17 +565,23 @@ def process_batch_calls(
         "details": results_detail,
     }
 
+import os
+
+SCHEDULE_FILE = "scheduled_time.txt"
+
+
 def get_scheduled_call_time() -> str:
-    """Retrieves the operator-selected scheduled call time string (e.g. '09:50 AM'). Defaults to '09:50 AM'."""
-    init_settings_table()
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT value FROM settings WHERE key = 'scheduled_call_time'"
-    )
-    row = cursor.fetchone()
-    conn.close()
-    return row["value"] if row else "09:50 AM"
+    """Reads current scheduled time string from local file."""
+    if os.path.exists(SCHEDULE_FILE):
+        try:
+            with open(SCHEDULE_FILE, "r") as f:
+                val = f.read().strip()
+                if val:
+                    return val
+        except Exception as e:
+            print(f"Error reading {SCHEDULE_FILE}: {e}")
+
+    return "09:50 AM"  # Fallback default only if file doesn't exist
 
 
 def set_scheduled_call_time(time_str: str):
