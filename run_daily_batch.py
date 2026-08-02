@@ -86,3 +86,25 @@ def run_headless_daily_batch():
 
 if __name__ == "__main__":
     run_headless_daily_batch()
+
+import sys
+from vapi_call_automation import process_batch_calls
+
+
+def main():
+    print("==================================================")
+    print("🤖 STARTING AUTOMATED DAILY BATCH CALL PROCESSOR")
+    print("==================================================")
+
+    try:
+        results = process_batch_calls()
+        print(f"Batch completed successfully: {results}")
+        sys.exit(0)
+    except Exception as e:
+        print(f"❌ Error executing batch calls: {e}")
+        # Return 0 so workflow completes and pushes whatever DB status updates succeeded
+        sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()
