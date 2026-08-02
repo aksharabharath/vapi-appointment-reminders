@@ -1,9 +1,11 @@
+import os
 from datetime import datetime
 import pytz
 import streamlit as st
+
+# Local modules
 from backend.github_sync import push_file_to_github
 from vapi_call_automation import (
-    DB_PATH,
     get_all_patients,
     get_call_history,
     get_pending_patients,
@@ -17,26 +19,20 @@ from vapi_call_automation import (
 
 PST_TZ = pytz.timezone("America/Los_Angeles")
 
+# Page Configuration
 st.set_page_config(
     page_title="AI Appointment Assistant",
     page_icon="📞",
     layout="wide",
 )
 
-# Custom Styling for Clean Hierarchy
+# Custom Layout Styling
 st.markdown(
     """
     <style>
     .stApp { max-width: 1200px; margin: 0 auto; }
-    .metric-card {
-        background-color: #f8f9fa;
-        border: 1px solid #e9ecef;
-        padding: 15px;
-        border-radius: 8px;
-        text-align: center;
-    }
     </style>
-""",
+    """,
     unsafe_allow_html=True,
 )
 
@@ -80,6 +76,7 @@ col_sched, col_trigger = st.columns([1, 1], gap="medium")
 with col_sched:
     st.markdown("### ⏰ Daily Automated Schedule")
 
+    # Automated Daily Schedule Toggle
     current_enabled = is_daily_schedule_enabled()
     new_toggle = st.toggle(
         "Enable Automated Daily Call Batch",
@@ -90,28 +87,75 @@ with col_sched:
     if new_toggle != current_enabled:
         set_daily_schedule_enabled(new_toggle)
         st.toast(
-            f"Automated schedule {'enabled' if new_toggle else 'disabled'}."
+            f"Automated schedule {'enabled' if new_toggle else 'disabled'}!"
         )
         st.rerun()
 
-    # Manual Text Entry for Scheduled Time
-    current_time_setting = get_scheduled_call_time()  # e.g. "09:50 AM"
+    # Load target call time from helper/file
+    current_time_setting = get_scheduled_call_time() or "12:50 PM"
 
-    selected_time = st.text_input(
-        "Target Call Time (PST):",
-        value=current_time_setting,
-        placeholder="e.g. 09:50 AM, 2:30 PM, or 14:00",
+    # Safely extract digits and AM/PM
+    parts = current_time_setting.split()
+    default_digits = parts[0] if len(parts) > 0 else "12:50"
+    default_period = parts[1].upper() if len(parts) > 1 else "PM"
+
+    col_time_val, col_period = st.columns([2, 1])
+
+    with col_time_val:
+        typed_time = st.text_input(
+            "Target Call Time (PST):",
+            value=default_digits,
+            placeholder="e.g. 12:50",
+            disabled=not new_toggle,
+            help="Type time digits (e.g. 12:50, 01:00).",
+        )
+
+    with col_period:
+        selected_period = st.selectbox(
+            "Period:",
+            options=["AM", "PM"],
+            index=0 if default_period == "AM" else 1,
+            disabled=not new_toggle,
+        )
+
+    full_selected_time = f"{typed_time.strip()} {selected_period}"
+
+    st.write(f"**Target Schedule:** `{full_selected_time} PST`")
+
+    # Explicit Save & Sync Button
+    if st.button(
+        "💾 Save & Sync Schedule to GitHub",
         disabled=not new_toggle,
-        help="Type any custom time format (e.g. 9:50 AM, 10:15 AM). Press Enter to save.",
-    )
+        type="secondary",
+        width="stretch",
+    ):
+        # 1. Save locally in memory/database helper
+        set_scheduled_call_time(full_selected_time)
 
-    if selected_time.strip() != current_time_setting:
-        set_scheduled_call_time(selected_time.strip())
-        st.toast(f"✅ Scheduled call time updated to '{selected_time.strip()}' PST!")
+        # 2. Write locally to disk
+        with open("scheduled_time.txt", "w") as f:
+            f.write(full_selected_time)
+
+        # 3. Push to GitHub REST API
+        with st.spinner("Pushing schedule to GitHub repository..."):
+            success = push_file_to_github(
+                file_path="scheduled_time.txt",
+                commit_message=f"Update target call time to '{full_selected_time}'",
+            )
+
+        if success:
+            st.success(
+                f"✅ Saved! Target call time set to '{full_selected_time}' PST and synced to GitHub."
+            )
+        else:
+            st.error(
+                "❌ Failed to push to GitHub. Verify `GITHUB_PAT` and `GITHUB_REPO` in Streamlit Secrets."
+            )
+
         st.rerun()
-        
+
 with col_trigger:
-    st.markdown("###  Manual Execution")
+    st.markdown("### 📞 Manual Execution")
     st.write(
         f"Click below to immediately initiate outbound voice calls for all **{pending_count} pending patient(s)**."
     )
@@ -123,11 +167,11 @@ with col_trigger:
         "📞 Call All Pending Patients Now",
         disabled=(pending_count == 0),
         type="primary",
-        use_container_width=True,
+        width="stretch",
     ):
         if not api_key or not phone_id:
             st.error(
-                "Missing VAPI_API_KEY or VAPI_PHONE_NUMBER_ID in Streamlit Secrets."
+                "Missing `VAPI_API_KEY` or `VAPI_PHONE_NUMBER_ID` in Streamlit Secrets."
             )
         else:
             progress_bar = st.progress(0)
@@ -146,14 +190,14 @@ with col_trigger:
             status_text.empty()
             progress_bar.empty()
             st.success(
-                f"Batch execution completed! Total: {results['total']} | Successful: {results['successful']} | Failed: {results['failed']}"
+                f"Batch completed! Total: {results['total']} | Successful: {results['successful']} | Failed: {results['failed']}"
             )
             st.rerun()
 
 st.divider()
 
 # ---------------------------------------------------------
-# 4. TABBED PATIENT & CALL AUDIT VIEWS
+# 4. PATIENT ROSTER & CALL AUDIT VIEWS
 # ---------------------------------------------------------
 st.subheader("📊 Patient & Audit Data")
 
@@ -163,17 +207,17 @@ tab1, tab2, tab3 = st.tabs(
 
 with tab1:
     if pending_list:
-        st.dataframe(pending_list, use_container_width=True, hide_index=True)
+        st.dataframe(pending_list, width="stretch", hide_index=True)
     else:
         st.info("🎉 No pending calls! All patients have been processed.")
 
 with tab2:
     if all_patients:
-        st.dataframe(all_patients, use_container_width=True, hide_index=True)
+        st.dataframe(all_patients, width="stretch", hide_index=True)
 
 with tab3:
     if call_history:
-        st.dataframe(call_history, use_container_width=True, hide_index=True)
+        st.dataframe(call_history, width="stretch", hide_index=True)
     else:
         st.caption("No call attempts logged yet.")
 
@@ -188,22 +232,3 @@ with st.expander("🛠️ Admin Utilities"):
         reset_all_patients_called_status()
         st.success("All patient statuses reset to pending.")
         st.rerun()
-
-# Example Streamlit Form or Input for Target Time
-new_target_time = st.text_input("Target Call Time (PST):", value="07:50 PM")
-
-if st.button("Save & Sync Schedule"):
-    # 1. Save time locally to file or SQLite
-    with open("scheduled_time.txt", "w") as f:
-        f.write(new_target_time.strip())
-
-    # 2. Auto-commit and push to GitHub so GitHub Actions picks it up!
-    with st.spinner("Syncing scheduled time to GitHub..."):
-        success = push_file_to_github(
-            file_path="scheduled_time.txt",
-            commit_message=f"Update target time to {new_target_time.strip()}",
-        )
-        if success:
-            st.success(
-                f"✅ Scheduled time ({new_target_time}) saved and synced to GitHub!"
-            )
