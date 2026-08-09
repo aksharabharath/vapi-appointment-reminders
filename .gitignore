@@ -2,4 +2,11 @@
 .env
 __pycache__/
 *.pycnode_modules/
+node_modules/
+.env
+.env.local
+.vercel
 frontend/node_modules/
+frontend/.next/
+frontend/.vercel/
+frontend/.env.local
