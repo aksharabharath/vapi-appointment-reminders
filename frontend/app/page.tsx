@@ -3,57 +3,49 @@
 import { useState, useEffect } from 'react';
 
 interface Patient {
-  id: number;
-  patient_name: string;
+  patient_id: number;
+  first_name: string;
+  last_name: string;
+  dob: string;
   phone_number: string;
+  home_address: string;
+  insurance_number: string;
+  medical_record_number: string;
+  appointment_date: string;
   appointment_time: string;
-  status: string;
-  retry_count: number;
-  last_call_timestamp?: string;
-  called_yet?: number;
+  timezone: string;
+  called_yet: number;
 }
 
-interface CallHistory {
-  id: number;
+interface CallAttempt {
+  id?: number;
   patient_id: number;
-  patient_name: string;
-  phone_number: string;
-  status: string;
   call_time: string;
+  status: string;
   vapi_call_id?: string;
 }
 
-export default function StreamlitStyleDashboard() {
-  // Real-time Clock
+export default function StreamlitDashboard() {
   const [pstTime, setPstTime] = useState<string>('');
-
-  // Data States
   const [allPatients, setAllPatients] = useState<Patient[]>([]);
-  const [callLogs, setCallLogs] = useState<CallHistory[]>([]);
+  const [callHistory, setCallHistory] = useState<CallAttempt[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Control Center: Schedule State
   const [isScheduleEnabled, setIsScheduleEnabled] = useState<boolean>(true);
   const [targetTime, setTargetTime] = useState<string>('01:00');
   const [period, setPeriod] = useState<string>('PM');
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
-  // Control Center: Manual Batch State
   const [isBatchExecuting, setIsBatchExecuting] = useState<boolean>(false);
   const [batchProgress, setBatchProgress] = useState<number>(0);
   const [batchStatusText, setBatchStatusText] = useState<string>('');
   const [batchSummary, setBatchSummary] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<string | null>(null);
 
-  // Active Tab
   const [activeTab, setActiveTab] = useState<'pending' | 'roster' | 'history'>('pending');
-
-  // Admin Utilities Expander State
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
-
-  // System Notifications
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
-  // Update Clock Every Second (America/Los_Angeles Timezone)
   useEffect(() => {
     const updateClock = () => {
       const now = new Date();
@@ -74,7 +66,6 @@ export default function StreamlitStyleDashboard() {
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch Data from Next.js API Routes
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -82,9 +73,10 @@ export default function StreamlitStyleDashboard() {
       const json = await res.json();
       if (json.success) {
         setAllPatients(json.data || []);
+        setCallHistory(json.call_attempts || []);
       }
     } catch (err) {
-      console.error('Failed to load patient database:', err);
+      console.error('Failed to load patients database:', err);
     } finally {
       setLoading(false);
     }
@@ -94,13 +86,9 @@ export default function StreamlitStyleDashboard() {
     fetchData();
   }, []);
 
-  // Derived Queues
-  const pendingQueue = allPatients.filter(
-    (p) => (p.called_yet === undefined ? p.status.toLowerCase() === 'pending' : p.called_yet === 0)
-  );
+  const pendingQueue = allPatients.filter((p) => Number(p.called_yet) === 0);
   const alreadyCalledQueue = allPatients.length - pendingQueue.length;
 
-  // Toggle Schedule Handler
   const handleToggleSchedule = (enabled: boolean) => {
     setIsScheduleEnabled(enabled);
     setToastMessage({
@@ -109,11 +97,9 @@ export default function StreamlitStyleDashboard() {
     });
   };
 
-  // Sync Schedule to GitHub
   const handleSaveAndSyncGithub = async () => {
     setIsSyncing(true);
     setToastMessage({ type: 'info', text: 'Syncing schedule directly to GitHub...' });
-
     const timeString = `${targetTime} ${period}`;
     try {
       const res = await fetch('/api/schedule/sync', {
@@ -128,28 +114,22 @@ export default function StreamlitStyleDashboard() {
           text: `✅ Target call time set to '${timeString}' PST and synced to GitHub!`,
         });
       } else {
-        setToastMessage({
-          type: 'error',
-          text: '❌ Sync failed. Please check Streamlit Cloud Secrets / GitHub Token.',
-        });
+        setToastMessage({ type: 'error', text: '❌ Sync failed.' });
       }
     } catch (err) {
-      setToastMessage({
-        type: 'error',
-        text: '❌ Sync failed. Please check Streamlit Cloud Secrets.',
-      });
+      setToastMessage({ type: 'error', text: '❌ Sync failed.' });
     } finally {
       setIsSyncing(false);
     }
   };
 
-  // Manual Batch Execution Handler
   const handleCallAllPendingNow = async () => {
     if (pendingQueue.length === 0) return;
 
     setIsBatchExecuting(true);
     setBatchProgress(0);
     setBatchSummary(null);
+    setLastError(null);
 
     let successCount = 0;
     let failedCount = 0;
@@ -158,17 +138,19 @@ export default function StreamlitStyleDashboard() {
     for (let i = 0; i < total; i++) {
       const patient = pendingQueue[i];
       const currentStep = i + 1;
+      const fullName = `${patient.first_name} ${patient.last_name}`;
       setBatchProgress(Math.round((currentStep / total) * 100));
-      setBatchStatusText(`[${currentStep}/${total}] Calling ${patient.patient_name}...`);
+      setBatchStatusText(`[${currentStep}/${total}] Calling ${fullName}...`);
 
       try {
         const res = await fetch('/api/calls/trigger', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            patientId: patient.patient_id,
             phoneNumber: patient.phone_number,
-            patientName: patient.patient_name,
-            appointmentTime: patient.appointment_time,
+            patientName: fullName,
+            appointmentTime: `${patient.appointment_date} ${patient.appointment_time}`,
           }),
         });
 
@@ -177,27 +159,28 @@ export default function StreamlitStyleDashboard() {
           successCount++;
         } else {
           failedCount++;
+          setLastError(json.error || 'Vapi API error');
         }
-      } catch (err) {
+      } catch (err: any) {
         failedCount++;
+        setLastError(err.message || 'Network error');
       }
     }
 
     setBatchSummary(`Batch completed! Total: ${total} | Successful: ${successCount} | Failed: ${failedCount}`);
     setIsBatchExecuting(false);
-    fetchData(); // Rerun app data refresh
+    fetchData();
   };
 
-  // Admin Reset Handler
   const handleResetAllPatients = async () => {
     try {
       const res = await fetch('/api/admin/reset', { method: 'POST' });
       const json = await res.json();
       if (json.success) {
-        setToastMessage({ type: 'success', text: 'All patient statuses reset to pending.' });
+        setToastMessage({ type: 'success', text: 'All patient statuses reset to pending (called_yet = 0).' });
         fetchData();
       } else {
-        setToastMessage({ type: 'error', text: 'Failed to reset patient statuses.' });
+        setToastMessage({ type: 'error', text: 'Failed to reset patient records.' });
       }
     } catch (err) {
       setToastMessage({ type: 'error', text: 'Error connecting to server.' });
@@ -207,8 +190,6 @@ export default function StreamlitStyleDashboard() {
   return (
     <div className="min-h-screen bg-[#F0F2F6] font-sans text-gray-800 p-4 md:p-8">
       <div className="max-w-[1200px] mx-auto space-y-6">
-
-        {/* 1. HEADER SECTION */}
         <header className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
           <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
             <span>📞</span> AI Appointment Assistant
@@ -222,7 +203,6 @@ export default function StreamlitStyleDashboard() {
           </p>
         </header>
 
-        {/* System Toast Messages */}
         {toastMessage && (
           <div
             className={`p-4 rounded-lg text-sm border font-medium transition flex items-center justify-between ${
@@ -234,16 +214,12 @@ export default function StreamlitStyleDashboard() {
             }`}
           >
             <span>{toastMessage.text}</span>
-            <button
-              onClick={() => setToastMessage(null)}
-              className="text-xs font-bold text-gray-500 hover:text-gray-800"
-            >
+            <button onClick={() => setToastMessage(null)} className="text-xs font-bold text-gray-500 hover:text-gray-800">
               ✕
             </button>
           </div>
         )}
 
-        {/* 2. DASHBOARD METRICS */}
         <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
             <p className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
@@ -269,27 +245,21 @@ export default function StreamlitStyleDashboard() {
 
         <hr className="border-gray-300" />
 
-        {/* 3. CONTROL CENTER */}
         <section className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
           <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
             <span>⚙️</span> Control Center
           </h2>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 divide-y md:divide-y-0 md:divide-x divide-gray-200">
-
-            {/* 3A. ⏰ Daily Automated Schedule */}
             <div className="space-y-4 pr-0 md:pr-4">
               <h3 className="text-md font-bold text-gray-800 flex items-center gap-1">
                 <span>⏰</span> Daily Automated Schedule
               </h3>
 
-              {/* Schedule Toggle */}
               <div className="flex items-center justify-between bg-gray-50 p-3 rounded-lg border border-gray-200">
                 <div>
                   <p className="text-sm font-semibold text-gray-800">Enable Automated Daily Call Batch</p>
-                  <p className="text-xs text-gray-500">
-                    When enabled, background calls execute automatically at scheduled time.
-                  </p>
+                  <p className="text-xs text-gray-500">When enabled, background calls execute automatically at scheduled time.</p>
                 </div>
                 <input
                   type="checkbox"
@@ -299,7 +269,6 @@ export default function StreamlitStyleDashboard() {
                 />
               </div>
 
-              {/* Time Input & AM/PM Selector */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-gray-600">Target Call Time (PST)</label>
@@ -331,7 +300,6 @@ export default function StreamlitStyleDashboard() {
                 Target Schedule: {targetTime} {period} PST
               </div>
 
-              {/* Save & Sync Button */}
               <button
                 disabled={!isScheduleEnabled || isSyncing}
                 onClick={handleSaveAndSyncGithub}
@@ -341,7 +309,6 @@ export default function StreamlitStyleDashboard() {
               </button>
             </div>
 
-            {/* 3B. 📞 Manual Execution */}
             <div className="space-y-4 pt-4 md:pt-0 pl-0 md:pl-6">
               <h3 className="text-md font-bold text-gray-800 flex items-center gap-1">
                 <span>📞</span> Manual Execution
@@ -360,7 +327,6 @@ export default function StreamlitStyleDashboard() {
                 {isBatchExecuting ? 'Executing Batch Calls...' : '📞 Call All Pending Patients Now'}
               </button>
 
-              {/* Progress UI */}
               {isBatchExecuting && (
                 <div className="space-y-2 bg-gray-50 p-4 rounded border border-gray-200">
                   <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
@@ -373,10 +339,10 @@ export default function StreamlitStyleDashboard() {
                 </div>
               )}
 
-              {/* Batch Summary */}
               {batchSummary && (
-                <div className="p-3 bg-green-50 text-green-800 text-xs font-bold rounded border border-green-200">
-                  {batchSummary}
+                <div className="p-3 bg-red-50 text-red-800 text-xs font-bold rounded border border-red-200 space-y-1">
+                  <p>{batchSummary}</p>
+                  {lastError && <p className="font-mono text-[11px] font-normal text-red-600">Error: {lastError}</p>}
                 </div>
               )}
             </div>
@@ -385,9 +351,7 @@ export default function StreamlitStyleDashboard() {
 
         <hr className="border-gray-300" />
 
-        {/* 4. PATIENT & AUDIT DATA TABS */}
         <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-          {/* Tab Selection Navigation */}
           <div className="flex border-b border-gray-200 bg-gray-50 text-sm font-bold">
             <button
               onClick={() => setActiveTab('pending')}
@@ -421,7 +385,6 @@ export default function StreamlitStyleDashboard() {
             </button>
           </div>
 
-          {/* Tab 1: Pending Queue */}
           {activeTab === 'pending' && (
             <div className="p-6">
               {pendingQueue.length === 0 ? (
@@ -434,22 +397,26 @@ export default function StreamlitStyleDashboard() {
                     <thead className="bg-gray-50 text-xs text-gray-500 uppercase border-b border-gray-200">
                       <tr>
                         <th className="px-4 py-3">ID</th>
-                        <th className="px-4 py-3">Patient Name</th>
+                        <th className="px-4 py-3">First Name</th>
+                        <th className="px-4 py-3">Last Name</th>
                         <th className="px-4 py-3">Phone Number</th>
+                        <th className="px-4 py-3">Appointment Date</th>
                         <th className="px-4 py-3">Appointment Time</th>
-                        <th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3">Called Yet</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
                       {pendingQueue.map((patient) => (
-                        <tr key={patient.id} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 font-mono text-xs text-gray-400">#{patient.id}</td>
-                          <td className="px-4 py-3 font-semibold text-gray-900">{patient.patient_name}</td>
+                        <tr key={patient.patient_id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 font-mono text-xs text-gray-400">#{patient.patient_id}</td>
+                          <td className="px-4 py-3 font-semibold text-gray-900">{patient.first_name}</td>
+                          <td className="px-4 py-3 font-semibold text-gray-900">{patient.last_name}</td>
                           <td className="px-4 py-3 font-mono text-gray-600">{patient.phone_number}</td>
+                          <td className="px-4 py-3">{patient.appointment_date}</td>
                           <td className="px-4 py-3">{patient.appointment_time}</td>
                           <td className="px-4 py-3">
                             <span className="px-2 py-0.5 text-xs font-bold rounded bg-yellow-100 text-yellow-800">
-                              Pending
+                              0 (Pending)
                             </span>
                           </td>
                         </tr>
@@ -461,7 +428,6 @@ export default function StreamlitStyleDashboard() {
             </div>
           )}
 
-          {/* Tab 2: Full Patient Roster */}
           {activeTab === 'roster' && (
             <div className="p-6">
               <div className="overflow-x-auto">
@@ -469,28 +435,36 @@ export default function StreamlitStyleDashboard() {
                   <thead className="bg-gray-50 text-xs text-gray-500 uppercase border-b border-gray-200">
                     <tr>
                       <th className="px-4 py-3">ID</th>
-                      <th className="px-4 py-3">Patient Name</th>
+                      <th className="px-4 py-3">First Name</th>
+                      <th className="px-4 py-3">Last Name</th>
+                      <th className="px-4 py-3">DOB</th>
                       <th className="px-4 py-3">Phone Number</th>
-                      <th className="px-4 py-3">Appointment Time</th>
-                      <th className="px-4 py-3">Status</th>
+                      <th className="px-4 py-3">MRN</th>
+                      <th className="px-4 py-3">Appointment</th>
+                      <th className="px-4 py-3">Called Yet</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
                     {allPatients.map((patient) => (
-                      <tr key={patient.id} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 font-mono text-xs text-gray-400">#{patient.id}</td>
-                        <td className="px-4 py-3 font-semibold text-gray-900">{patient.patient_name}</td>
+                      <tr key={patient.patient_id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 font-mono text-xs text-gray-400">#{patient.patient_id}</td>
+                        <td className="px-4 py-3 font-semibold text-gray-900">{patient.first_name}</td>
+                        <td className="px-4 py-3 font-semibold text-gray-900">{patient.last_name}</td>
+                        <td className="px-4 py-3 text-xs">{patient.dob}</td>
                         <td className="px-4 py-3 font-mono text-gray-600">{patient.phone_number}</td>
-                        <td className="px-4 py-3">{patient.appointment_time}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{patient.medical_record_number}</td>
+                        <td className="px-4 py-3 text-xs">
+                          {patient.appointment_date} {patient.appointment_time}
+                        </td>
                         <td className="px-4 py-3">
                           <span
                             className={`px-2 py-0.5 text-xs font-bold rounded ${
-                              patient.status.toLowerCase() === 'confirmed'
+                              Number(patient.called_yet) === 1
                                 ? 'bg-green-100 text-green-800'
                                 : 'bg-yellow-100 text-yellow-800'
                             }`}
                           >
-                            {patient.status}
+                            {patient.called_yet}
                           </span>
                         </td>
                       </tr>
@@ -501,33 +475,30 @@ export default function StreamlitStyleDashboard() {
             </div>
           )}
 
-          {/* Tab 3: Call Audit History */}
           {activeTab === 'history' && (
             <div className="p-6">
-              {callLogs.length === 0 ? (
-                <div className="text-center py-12 text-gray-500 text-sm font-semibold">
-                  No call attempts logged yet.
-                </div>
+              {callHistory.length === 0 ? (
+                <div className="text-center py-12 text-gray-500 text-sm font-semibold">No call attempts logged yet.</div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-sm text-gray-700">
                     <thead className="bg-gray-50 text-xs text-gray-500 uppercase border-b border-gray-200">
                       <tr>
-                        <th className="px-4 py-3">Call ID</th>
-                        <th className="px-4 py-3">Patient Name</th>
-                        <th className="px-4 py-3">Phone Number</th>
+                        <th className="px-4 py-3">ID</th>
+                        <th className="px-4 py-3">Patient ID</th>
                         <th className="px-4 py-3">Call Time</th>
-                        <th className="px-4 py-3">Outcome</th>
+                        <th className="px-4 py-3">Status</th>
+                        <th className="px-4 py-3">Vapi Call ID</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
-                      {callLogs.map((log) => (
-                        <tr key={log.id} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 font-mono text-xs text-gray-400">{log.vapi_call_id || log.id}</td>
-                          <td className="px-4 py-3 font-semibold text-gray-900">{log.patient_name}</td>
-                          <td className="px-4 py-3 font-mono text-gray-600">{log.phone_number}</td>
+                      {callHistory.map((log, idx) => (
+                        <tr key={log.id || idx} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 font-mono text-xs text-gray-400">#{log.id || idx + 1}</td>
+                          <td className="px-4 py-3 font-mono text-xs">#{log.patient_id}</td>
                           <td className="px-4 py-3">{log.call_time}</td>
-                          <td className="px-4 py-3 font-bold">{log.status}</td>
+                          <td className="px-4 py-3 font-bold text-green-700">{log.status}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-gray-500">{log.vapi_call_id || '-'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -540,7 +511,6 @@ export default function StreamlitStyleDashboard() {
 
         <hr className="border-gray-300" />
 
-        {/* 5. 🛠️ ADMIN UTILITIES EXPANDER */}
         <section className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <button
             onClick={() => setIsAdminOpen(!isAdminOpen)}
@@ -567,7 +537,6 @@ export default function StreamlitStyleDashboard() {
             </div>
           )}
         </section>
-
       </div>
     </div>
   );

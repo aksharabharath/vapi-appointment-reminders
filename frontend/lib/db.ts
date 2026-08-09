@@ -3,46 +3,64 @@ import path from 'path';
 import fs from 'fs';
 
 export function getDbPath(): string {
-  // Check root customer_call directory relative to frontend cwd
-  const parentDbPath = path.resolve(process.cwd(), '../appointment_reminders.db');
+  const parentDbPath = path.resolve(process.cwd(), '../patients.db');
   if (fs.existsSync(parentDbPath)) {
     return parentDbPath;
   }
-
-  // Check current working directory
-  const localDbPath = path.resolve(process.cwd(), 'appointment_reminders.db');
-  if (fs.existsSync(localDbPath)) {
-    return localDbPath;
-  }
-
-  // Fallback default
-  return parentDbPath;
+  return path.resolve(process.cwd(), 'patients.db');
 }
 
 export function getDb() {
   const dbPath = getDbPath();
-  return new Database(dbPath, { readonly: true, fileMustExist: false });
+  return new Database(dbPath, { fileMustExist: false });
 }
 
-export interface AppointmentReminder {
-  id: number;
-  patient_name: string;
+export interface PatientRecord {
+  patient_id: number;
+  first_name: string;
+  last_name: string;
+  dob: string;
   phone_number: string;
+  home_address: string;
+  insurance_number: string;
+  medical_record_number: string;
+  appointment_date: string;
   appointment_time: string;
-  status: string;
-  retry_count: number;
-  last_call_timestamp?: string;
+  timezone: string;
+  called_yet: number;
 }
 
-export function getAppointmentReminders(): AppointmentReminder[] {
+export interface CallAttemptRecord {
+  id?: number;
+  patient_id: number;
+  call_time: string;
+  status: string;
+  vapi_call_id?: string;
+  notes?: string;
+}
+
+export function getPatients(): PatientRecord[] {
   try {
     const db = getDb();
-    const stmt = db.prepare('SELECT * FROM appointment_reminders ORDER BY id DESC');
-    const rows = stmt.all() as AppointmentReminder[];
+    const stmt = db.prepare('SELECT * FROM patients ORDER BY patient_id ASC');
+    const rows = stmt.all() as PatientRecord[];
     db.close();
     return rows;
   } catch (err) {
-    console.error('Database query error:', err);
+    console.error('Database query error (patients):', err);
+    return [];
+  }
+}
+
+export function getCallAttempts(): CallAttemptRecord[] {
+  try {
+    const db = getDb();
+    const stmt = db.prepare('SELECT * FROM call_attempts ORDER BY id DESC');
+    const rows = stmt.all() as CallAttemptRecord[];
+    db.close();
+    return rows;
+  } catch (err) {
+    console.error('Database query error (call_attempts):', err);
     return [];
   }
 }

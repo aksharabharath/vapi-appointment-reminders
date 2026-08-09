@@ -1,23 +1,35 @@
 import { NextResponse } from 'next/server';
+import { getDb } from '@/lib/db';
+
+function formatToE164(phone: string): string {
+  if (!phone) return '';
+  const cleaned = phone.replace(/\D/g, '');
+  if (cleaned.length === 10) {
+    return `+1${cleaned}`;
+  } else if (cleaned.length === 11 && cleaned.startsWith('1')) {
+    return `+${cleaned}`;
+  } else if (phone.startsWith('+')) {
+    return phone;
+  }
+  return `+${cleaned}`;
+}
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { phoneNumber, patientName, appointmentTime } = body;
+    const { patientId, phoneNumber, patientName, appointmentTime } = body;
 
     if (!phoneNumber) {
-      return NextResponse.json(
-        { success: false, error: 'Phone number is required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: 'Phone number is required' }, { status: 400 });
     }
 
+    const formattedPhone = formatToE164(phoneNumber);
     const vapiApiKey = process.env.VAPI_API_KEY;
     const vapiPhoneNumberId = process.env.VAPI_PHONE_NUMBER_ID;
 
     if (!vapiApiKey || !vapiPhoneNumberId) {
       return NextResponse.json(
-        { success: false, error: 'Vapi environment variables not configured' },
+        { success: false, error: 'VAPI_API_KEY or VAPI_PHONE_NUMBER_ID missing in env' },
         { status: 500 }
       );
     }
@@ -31,7 +43,7 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         phoneNumberId: vapiPhoneNumberId,
         customer: {
-          number: phoneNumber,
+          number: formattedPhone,
           name: patientName || 'Patient',
         },
         assistant: {
@@ -53,7 +65,24 @@ export async function POST(request: Request) {
     const callData = await response.json();
 
     if (!response.ok) {
-      throw new Error(callData.message || 'Failed to trigger Vapi call');
+      return NextResponse.json(
+        { success: false, error: callData.message || JSON.stringify(callData) },
+        { status: response.status }
+      );
+    }
+
+    // Log call attempt and update called_yet = 1
+    try {
+      const db = getDb();
+      if (patientId) {
+        db.prepare('UPDATE patients SET called_yet = 1 WHERE patient_id = ?').run(patientId);
+        db.prepare(
+          'INSERT INTO call_attempts (patient_id, call_time, status, vapi_call_id) VALUES (?, datetime("now"), ?, ?)'
+        ).run(patientId, 'initiated', callData.id || '');
+      }
+      db.close();
+    } catch (dbErr) {
+      console.error('Failed to update DB call attempt record:', dbErr);
     }
 
     return NextResponse.json({

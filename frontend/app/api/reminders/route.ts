@@ -1,13 +1,18 @@
 import { NextResponse } from 'next/server';
-import { getAppointmentReminders } from '@/lib/db';
+import { getPatients, getCallAttempts } from '@/lib/db';
 
 export async function GET() {
   try {
-    const reminders = getAppointmentReminders();
-    return NextResponse.json({ success: true, data: reminders });
+    const patients = getPatients();
+    const attempts = getCallAttempts();
+    return NextResponse.json({
+      success: true,
+      data: patients,
+      call_attempts: attempts,
+    });
   } catch (error: any) {
     return NextResponse.json(
-      { success: false, error: error.message || 'Failed to fetch appointment reminders' },
+      { success: false, error: error.message || 'Failed to fetch patients from database' },
       { status: 500 }
     );
   }
