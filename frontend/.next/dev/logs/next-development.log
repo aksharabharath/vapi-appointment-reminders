@@ -1,3 +1,0 @@
-{"timestamp":"00:00:00.940","source":"Server","level":"LOG","message":""}
-{"timestamp":"00:07:06.418","source":"Server","level":"LOG","message":"  Reload env: .env.local"}
-{"timestamp":"00:15:03.303","source":"Server","level":"ERROR","message":"⨯ \"unhandledRejection:\" Error: ENOENT: no such file or directory, scandir '/Users/radha/customer_call/frontend/app'"}
