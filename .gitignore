@@ -1,4 +1,5 @@
 .streamlit/secrets.toml
+docs/
 .env
 __pycache__/
 *.pycnode_modules/
