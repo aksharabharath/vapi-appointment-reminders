@@ -71,14 +71,19 @@ export async function POST(request: Request) {
       );
     }
 
-    // Log call attempt and update called_yet = 1
+    // Log start only. Do not mark called_yet — that means confirm/reschedule (product spec §8).
     try {
       const db = getDb();
       if (patientId) {
-        db.prepare('UPDATE patients SET called_yet = 1 WHERE patient_id = ?').run(patientId);
-        db.prepare(
-          'INSERT INTO call_attempts (patient_id, call_time, status, vapi_call_id) VALUES (?, datetime("now"), ?, ?)'
-        ).run(patientId, 'initiated', callData.id || '');
+        try {
+          db.prepare(
+            'INSERT INTO call_attempts (patient_id, vapi_call_id, status, decision, user_speech, created_at) VALUES (?, ?, ?, ?, ?, datetime("now"))'
+          ).run(patientId, callData.id || '', 'initiated', '', 'Call started');
+        } catch {
+          db.prepare(
+            'INSERT INTO call_attempts (patient_id, call_time, status, vapi_call_id) VALUES (?, datetime("now"), ?, ?)'
+          ).run(patientId, 'initiated', callData.id || '');
+        }
       }
       db.close();
     } catch (dbErr) {

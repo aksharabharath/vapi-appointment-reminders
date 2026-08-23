@@ -1,25 +1,16 @@
 import Database from 'better-sqlite3';
-import path from 'path';
-import fs from 'fs';
 
-export function getDbPath(): string {
-  const parentDbPath = path.resolve(process.cwd(), '../patients.db');
-  if (fs.existsSync(parentDbPath)) {
-    return parentDbPath;
-  }
-  return path.resolve(process.cwd(), 'patients.db');
-}
+const DB_PATH = '/Users/radha/customer_call/patients.db';
 
 export function getDb() {
-  const dbPath = getDbPath();
-  return new Database(dbPath, { fileMustExist: false });
+  return new Database(DB_PATH, { fileMustExist: false });
 }
 
 export interface PatientRecord {
-  patient_id: number;
+  patient_id: string;
   first_name: string;
   last_name: string;
-  dob: string;
+  date_of_birth?: string;
   phone_number: string;
   home_address: string;
   insurance_number: string;
@@ -32,18 +23,25 @@ export interface PatientRecord {
 
 export interface CallAttemptRecord {
   id?: number;
-  patient_id: number;
-  call_time: string;
-  status: string;
+  patient_id: string;
+  patient_name?: string;
   vapi_call_id?: string;
-  notes?: string;
+  status: string;
+  decision?: string;
+  user_speech?: string;
+  call_time: string;
+}
+
+export interface ScheduleSettings {
+  enabled: boolean;
+  time: string;
+  period: string;
 }
 
 export function getPatients(): PatientRecord[] {
   try {
     const db = getDb();
-    const stmt = db.prepare('SELECT * FROM patients ORDER BY patient_id ASC');
-    const rows = stmt.all() as PatientRecord[];
+    const rows = db.prepare('SELECT * FROM patients ORDER BY patient_id ASC').all() as PatientRecord[];
     db.close();
     return rows;
   } catch (err) {
@@ -52,15 +50,68 @@ export function getPatients(): PatientRecord[] {
   }
 }
 
+export function getAppointmentReminders(): PatientRecord[] {
+  return getPatients();
+}
+
 export function getCallAttempts(): CallAttemptRecord[] {
   try {
     const db = getDb();
-    const stmt = db.prepare('SELECT * FROM call_attempts ORDER BY id DESC');
-    const rows = stmt.all() as CallAttemptRecord[];
+    const attempts = db.prepare('SELECT * FROM call_attempts ORDER BY call_attempt_id DESC').all() as any[];
+    const patients = db.prepare('SELECT patient_id, first_name, last_name FROM patients').all() as any[];
     db.close();
-    return rows;
+
+    const patientMap = new Map<string, string>();
+    patients.forEach((p) => {
+      patientMap.set(String(p.patient_id).trim(), `${p.first_name} ${p.last_name}`);
+    });
+
+    return attempts.map((ca) => {
+      const pid = String(ca.patient_id).trim();
+      return {
+        id: ca.call_attempt_id,
+        patient_id: pid,
+        patient_name: patientMap.get(pid) || `Patient #${pid}`,
+        vapi_call_id: ca.vapi_call_id || '-',
+        status: ca.status || 'initiated',
+        decision: ca.decision || '',
+        user_speech: ca.user_speech || '',
+        call_time: ca.created_at || ca.call_time || new Date().toISOString(),
+      };
+    });
   } catch (err) {
     console.error('Database query error (call_attempts):', err);
     return [];
+  }
+}
+
+export function getScheduleSettings(): ScheduleSettings {
+  try {
+    const db = getDb();
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'schedule_config'").get() as { value: string } | undefined;
+    db.close();
+
+    if (row && row.value) {
+      return JSON.parse(row.value);
+    }
+  } catch (err) {
+    console.error('Error reading settings:', err);
+  }
+  // Default fallback
+  return { enabled: false, time: '09:00', period: 'AM' };
+}
+
+export function saveScheduleSettings(settings: ScheduleSettings): boolean {
+  try {
+    const db = getDb();
+    db.prepare(`
+      INSERT INTO settings (key, value) VALUES ('schedule_config', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(JSON.stringify(settings));
+    db.close();
+    return true;
+  } catch (err) {
+    console.error('Error saving settings:', err);
+    return false;
   }
 }
