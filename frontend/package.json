@@ -6,10 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "tsx --test lib/records.test.ts",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:seed": "tsx scripts/seed-from-sqlite.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^13.0.3",
+    "@neondatabase/serverless": "^1.0.2",
     "next": "16.3.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
@@ -17,6 +20,8 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/better-sqlite3": "^9.6.0",
+    "better-sqlite3": "^13.0.3",
+    "tsx": "^4.21.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 
 interface Patient {
-  patient_id: number;
+  patient_id: string | number;
   first_name: string;
   last_name: string;
   dob: string;
@@ -19,7 +19,7 @@ interface Patient {
 
 interface CallAttempt {
   id?: number;
-  patient_id: number;
+  patient_id: string | number;
   call_time: string;
   status: string;
   vapi_call_id?: string;
@@ -84,6 +84,17 @@ export default function StreamlitDashboard() {
 
   useEffect(() => {
     fetchData();
+    fetch('/api/schedule/sync')
+      .then((r) => r.json())
+      .then((json) => {
+        if (!json.success || !json.settings?.scheduledTime) return;
+        const raw = String(json.settings.scheduledTime).replace(/\s*PST\s*$/i, '').trim();
+        const parts = raw.split(/\s+/);
+        if (parts[0]) setTargetTime(parts[0]);
+        if (parts[1] === 'AM' || parts[1] === 'PM') setPeriod(parts[1]);
+        if (typeof json.settings.enabled === 'boolean') setIsScheduleEnabled(json.settings.enabled);
+      })
+      .catch(() => undefined);
   }, []);
 
   const pendingQueue = allPatients.filter((p) => Number(p.called_yet) === 0);
@@ -99,7 +110,7 @@ export default function StreamlitDashboard() {
 
   const handleSaveAndSyncGithub = async () => {
     setIsSyncing(true);
-    setToastMessage({ type: 'info', text: 'Syncing schedule directly to GitHub...' });
+    setToastMessage({ type: 'info', text: 'Saving schedule to the database...' });
     const timeString = `${targetTime} ${period}`;
     try {
       const res = await fetch('/api/schedule/sync', {
@@ -111,7 +122,7 @@ export default function StreamlitDashboard() {
       if (json.success) {
         setToastMessage({
           type: 'success',
-          text: `✅ Target call time set to '${timeString}' PST and synced to GitHub!`,
+          text: `Target call time set to '${timeString}' PST and saved.`,
         });
       } else {
         setToastMessage({ type: 'error', text: '❌ Sync failed.' });
@@ -305,7 +316,7 @@ export default function StreamlitDashboard() {
                 onClick={handleSaveAndSyncGithub}
                 className="w-full py-2.5 bg-[#FF4B4B] hover:bg-[#E63939] text-white font-bold text-sm rounded shadow-sm transition disabled:opacity-50"
               >
-                {isSyncing ? 'Syncing...' : '💾 Save & Sync Schedule to GitHub'}
+                {isSyncing ? 'Saving...' : 'Save schedule'}
               </button>
             </div>
 

@@ -1,66 +1,97 @@
-import Database from 'better-sqlite3';
-import path from 'path';
-import fs from 'fs';
+import { neon, type NeonQueryFunction } from '@neondatabase/serverless';
+import { mapCallAttempt, mapPatient, type CallAttemptRecord, type PatientRecord } from '@/lib/records';
 
-export function getDbPath(): string {
-  const parentDbPath = path.resolve(process.cwd(), '../patients.db');
-  if (fs.existsSync(parentDbPath)) {
-    return parentDbPath;
+export type { CallAttemptRecord, PatientRecord } from '@/lib/records';
+
+export function getDatabaseUrl(): string {
+  const url = process.env.DATABASE_URL?.trim();
+  if (!url) {
+    throw new Error('DATABASE_URL is not set. Add it to frontend/.env.local for local use, or Vercel env for deploy.');
   }
-  return path.resolve(process.cwd(), 'patients.db');
+  return url;
 }
 
-export function getDb() {
-  const dbPath = getDbPath();
-  return new Database(dbPath, { fileMustExist: false });
+export function getSql(): NeonQueryFunction<false, false> {
+  return neon(getDatabaseUrl());
 }
 
-export interface PatientRecord {
-  patient_id: number;
-  first_name: string;
-  last_name: string;
-  dob: string;
-  phone_number: string;
-  home_address: string;
-  insurance_number: string;
-  medical_record_number: string;
-  appointment_date: string;
-  appointment_time: string;
-  timezone: string;
-  called_yet: number;
+export async function getPatients(): Promise<PatientRecord[]> {
+  const sql = getSql();
+  const rows = await sql`
+    SELECT
+      patient_id,
+      first_name,
+      last_name,
+      date_of_birth,
+      phone_number,
+      home_address,
+      insurance_number,
+      medical_record_number,
+      appointment_date,
+      appointment_time,
+      timezone,
+      called_yet
+    FROM patients
+    ORDER BY patient_id ASC
+  `;
+  return (rows as any[]).map(mapPatient);
 }
 
-export interface CallAttemptRecord {
-  id?: number;
-  patient_id: number;
-  call_time: string;
-  status: string;
-  vapi_call_id?: string;
-  notes?: string;
+export async function getCallAttempts(): Promise<CallAttemptRecord[]> {
+  const sql = getSql();
+  const rows = await sql`
+    SELECT
+      call_attempt_id,
+      patient_id,
+      vapi_call_id,
+      status,
+      decision,
+      user_speech,
+      created_at
+    FROM call_attempts
+    ORDER BY call_attempt_id DESC
+  `;
+  return (rows as any[]).map(mapCallAttempt);
 }
 
-export function getPatients(): PatientRecord[] {
-  try {
-    const db = getDb();
-    const stmt = db.prepare('SELECT * FROM patients ORDER BY patient_id ASC');
-    const rows = stmt.all() as PatientRecord[];
-    db.close();
-    return rows;
-  } catch (err) {
-    console.error('Database query error (patients):', err);
-    return [];
-  }
+export async function markPatientCalled(patientId: string, vapiCallId: string, status: string): Promise<void> {
+  const sql = getSql();
+  await sql`UPDATE patients SET called_yet = 1 WHERE patient_id = ${patientId}`;
+  await sql`
+    INSERT INTO call_attempts (patient_id, vapi_call_id, status, decision, user_speech)
+    VALUES (${patientId}, ${vapiCallId}, ${status}, '', '')
+  `;
 }
 
-export function getCallAttempts(): CallAttemptRecord[] {
-  try {
-    const db = getDb();
-    const stmt = db.prepare('SELECT * FROM call_attempts ORDER BY id DESC');
-    const rows = stmt.all() as CallAttemptRecord[];
-    db.close();
-    return rows;
-  } catch (err) {
-    console.error('Database query error (call_attempts):', err);
-    return [];
-  }
+export async function resetAllPatientsPending(): Promise<void> {
+  const sql = getSql();
+  await sql`UPDATE patients SET called_yet = 0`;
+}
+
+export type ScheduleSettings = {
+  enabled: boolean;
+  scheduledTime: string;
+};
+
+export async function getScheduleSettings(): Promise<ScheduleSettings> {
+  const sql = getSql();
+  const rows = await sql`SELECT key, value FROM settings WHERE key IN ('schedule_enabled', 'scheduled_call_time')`;
+  const map = new Map<string, string>((rows as { key: string; value: string }[]).map((r) => [r.key, r.value]));
+  return {
+    enabled: map.get('schedule_enabled') !== '0',
+    scheduledTime: map.get('scheduled_call_time') || '01:00 PM PST',
+  };
+}
+
+export async function saveScheduleSettings(settings: ScheduleSettings): Promise<void> {
+  const sql = getSql();
+  const enabled = settings.enabled ? '1' : '0';
+  await sql`
+    INSERT INTO settings (key, value) VALUES ('schedule_enabled', ${enabled})
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+  `;
+  await sql`
+    INSERT INTO settings (key, value) VALUES ('scheduled_call_time', ${settings.scheduledTime})
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+  `;
 }

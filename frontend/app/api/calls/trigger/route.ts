@@ -1,18 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { markPatientCalled } from '@/lib/db';
+import { formatToE164 } from '@/lib/records';
 
-function formatToE164(phone: string): string {
-  if (!phone) return '';
-  const cleaned = phone.replace(/\D/g, '');
-  if (cleaned.length === 10) {
-    return `+1${cleaned}`;
-  } else if (cleaned.length === 11 && cleaned.startsWith('1')) {
-    return `+${cleaned}`;
-  } else if (phone.startsWith('+')) {
-    return phone;
-  }
-  return `+${cleaned}`;
-}
+export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
   try {
@@ -37,7 +27,7 @@ export async function POST(request: Request) {
     const response = await fetch('https://api.vapi.ai/call/phone', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${vapiApiKey}`,
+        Authorization: `Bearer ${vapiApiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -71,18 +61,12 @@ export async function POST(request: Request) {
       );
     }
 
-    // Log call attempt and update called_yet = 1
-    try {
-      const db = getDb();
-      if (patientId) {
-        db.prepare('UPDATE patients SET called_yet = 1 WHERE patient_id = ?').run(patientId);
-        db.prepare(
-          'INSERT INTO call_attempts (patient_id, call_time, status, vapi_call_id) VALUES (?, datetime("now"), ?, ?)'
-        ).run(patientId, 'initiated', callData.id || '');
+    if (patientId) {
+      try {
+        await markPatientCalled(String(patientId), callData.id || '', callData.status || 'initiated');
+      } catch (dbErr) {
+        console.error('Failed to update Neon call attempt record:', dbErr);
       }
-      db.close();
-    } catch (dbErr) {
-      console.error('Failed to update DB call attempt record:', dbErr);
     }
 
     return NextResponse.json({
@@ -91,10 +75,8 @@ export async function POST(request: Request) {
       callId: callData.id,
       status: callData.status,
     });
-  } catch (error: any) {
-    return NextResponse.json(
-      { success: false, error: error.message || 'Internal server error' },
-      { status: 500 }
-    );
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Internal server error';
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }
