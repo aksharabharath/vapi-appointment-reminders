@@ -1,117 +1,115 @@
-import Database from 'better-sqlite3';
+import { neon, type NeonQueryFunction } from '@neondatabase/serverless';
+import { mapCallAttempt, mapPatient, type CallAttemptRecord, type PatientRecord } from '@/lib/records';
 
-const DB_PATH = '/Users/radha/customer_call/patients.db';
+export type { CallAttemptRecord, PatientRecord } from '@/lib/records';
 
-export function getDb() {
-  return new Database(DB_PATH, { fileMustExist: false });
-}
-
-export interface PatientRecord {
-  patient_id: string;
-  first_name: string;
-  last_name: string;
-  date_of_birth?: string;
-  phone_number: string;
-  home_address: string;
-  insurance_number: string;
-  medical_record_number: string;
-  appointment_date: string;
-  appointment_time: string;
-  timezone: string;
-  called_yet: number;
-}
-
-export interface CallAttemptRecord {
-  id?: number;
-  patient_id: string;
-  patient_name?: string;
-  vapi_call_id?: string;
-  status: string;
-  decision?: string;
-  user_speech?: string;
-  call_time: string;
-}
-
-export interface ScheduleSettings {
-  enabled: boolean;
-  time: string;
-  period: string;
-}
-
-export function getPatients(): PatientRecord[] {
-  try {
-    const db = getDb();
-    const rows = db.prepare('SELECT * FROM patients ORDER BY patient_id ASC').all() as PatientRecord[];
-    db.close();
-    return rows;
-  } catch (err) {
-    console.error('Database query error (patients):', err);
-    return [];
+export function getDatabaseUrl(): string {
+  const url = process.env.DATABASE_URL?.trim();
+  if (!url) {
+    throw new Error('DATABASE_URL is not set. Add it to frontend/.env.local for local use, or Vercel env for deploy.');
   }
+  return url;
 }
 
-export function getAppointmentReminders(): PatientRecord[] {
+export function getSql(): NeonQueryFunction<false, false> {
+  return neon(getDatabaseUrl());
+}
+
+export async function getPatients(): Promise<PatientRecord[]> {
+  const sql = getSql();
+  const rows = await sql`
+    SELECT
+      patient_id,
+      first_name,
+      last_name,
+      date_of_birth,
+      phone_number,
+      home_address,
+      insurance_number,
+      medical_record_number,
+      appointment_date,
+      appointment_time,
+      timezone,
+      called_yet
+    FROM patients
+    ORDER BY patient_id ASC
+  `;
+  return (rows as Parameters<typeof mapPatient>[0][]).map(mapPatient);
+}
+
+export function getAppointmentReminders(): Promise<PatientRecord[]> {
   return getPatients();
 }
 
-export function getCallAttempts(): CallAttemptRecord[] {
+export async function getCallAttempts(): Promise<CallAttemptRecord[]> {
+  const sql = getSql();
+  const rows = await sql`
+    SELECT
+      ca.call_attempt_id,
+      ca.patient_id,
+      ca.vapi_call_id,
+      ca.status,
+      ca.decision,
+      ca.user_speech,
+      ca.created_at,
+      p.first_name,
+      p.last_name
+    FROM call_attempts ca
+    LEFT JOIN patients p ON p.patient_id = ca.patient_id
+    ORDER BY ca.call_attempt_id DESC
+  `;
+  return (rows as Parameters<typeof mapCallAttempt>[0][]).map(mapCallAttempt);
+}
+
+/** Record that a dial started. Do not set called_yet (that means confirm/reschedule). */
+export async function logCallStarted(patientId: string, vapiCallId: string, status: string): Promise<void> {
+  const sql = getSql();
+  await sql`
+    INSERT INTO call_attempts (patient_id, vapi_call_id, status, decision, user_speech)
+    VALUES (${patientId}, ${vapiCallId}, ${status}, '', 'Call started')
+  `;
+}
+
+export async function resetAllPatientsPending(): Promise<void> {
+  const sql = getSql();
+  await sql`UPDATE patients SET called_yet = 0`;
+}
+
+export type ScheduleSettings = {
+  enabled: boolean;
+  time: string;
+  period: string;
+};
+
+const DEFAULT_SCHEDULE: ScheduleSettings = { enabled: false, time: '09:00', period: 'AM' };
+
+export async function getScheduleSettings(): Promise<ScheduleSettings> {
+  const sql = getSql();
+  const rows = await sql`SELECT value FROM settings WHERE key = 'schedule_config'`;
+  const value = (rows as { value: string }[])[0]?.value;
+  if (!value) return DEFAULT_SCHEDULE;
   try {
-    const db = getDb();
-    const attempts = db.prepare('SELECT * FROM call_attempts ORDER BY call_attempt_id DESC').all() as any[];
-    const patients = db.prepare('SELECT patient_id, first_name, last_name FROM patients').all() as any[];
-    db.close();
-
-    const patientMap = new Map<string, string>();
-    patients.forEach((p) => {
-      patientMap.set(String(p.patient_id).trim(), `${p.first_name} ${p.last_name}`);
-    });
-
-    return attempts.map((ca) => {
-      const pid = String(ca.patient_id).trim();
-      return {
-        id: ca.call_attempt_id,
-        patient_id: pid,
-        patient_name: patientMap.get(pid) || `Patient #${pid}`,
-        vapi_call_id: ca.vapi_call_id || '-',
-        status: ca.status || 'initiated',
-        decision: ca.decision || '',
-        user_speech: ca.user_speech || '',
-        call_time: ca.created_at || ca.call_time || new Date().toISOString(),
-      };
-    });
-  } catch (err) {
-    console.error('Database query error (call_attempts):', err);
-    return [];
+    const parsed = JSON.parse(value) as Partial<ScheduleSettings>;
+    return {
+      enabled: Boolean(parsed.enabled),
+      time: parsed.time || DEFAULT_SCHEDULE.time,
+      period: parsed.period === 'PM' ? 'PM' : 'AM',
+    };
+  } catch {
+    return DEFAULT_SCHEDULE;
   }
 }
 
-export function getScheduleSettings(): ScheduleSettings {
-  try {
-    const db = getDb();
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'schedule_config'").get() as { value: string } | undefined;
-    db.close();
-
-    if (row && row.value) {
-      return JSON.parse(row.value);
-    }
-  } catch (err) {
-    console.error('Error reading settings:', err);
-  }
-  // Default fallback
-  return { enabled: false, time: '09:00', period: 'AM' };
-}
-
-export function saveScheduleSettings(settings: ScheduleSettings): boolean {
-  try {
-    const db = getDb();
-    db.prepare(`
-      INSERT INTO settings (key, value) VALUES ('schedule_config', ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `).run(JSON.stringify(settings));
-    db.close();
-    return true;
-  } catch (err) {
-    console.error('Error saving settings:', err);
-    return false;
-  }
+export async function saveScheduleSettings(settings: ScheduleSettings): Promise<boolean> {
+  const sql = getSql();
+  const payload = JSON.stringify({
+    enabled: settings.enabled,
+    time: settings.time,
+    period: settings.period,
+  });
+  await sql`
+    INSERT INTO settings (key, value) VALUES ('schedule_config', ${payload})
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+  `;
+  return true;
 }
