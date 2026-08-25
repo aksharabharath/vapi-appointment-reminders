@@ -113,3 +113,19 @@ export async function saveScheduleSettings(settings: ScheduleSettings): Promise<
   `;
   return true;
 }
+
+const LAST_DISPATCH_KEY = 'last_daily_dispatch_date';
+
+export async function getLastDailyDispatchDate(): Promise<string | null> {
+  const sql = getSql();
+  const rows = await sql`SELECT value FROM settings WHERE key = ${LAST_DISPATCH_KEY}`;
+  return (rows as { value: string }[])[0]?.value || null;
+}
+
+export async function setLastDailyDispatchDate(dateKey: string): Promise<void> {
+  const sql = getSql();
+  await sql`
+    INSERT INTO settings (key, value) VALUES (${LAST_DISPATCH_KEY}, ${dateKey})
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+  `;
+}

@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { logCallStarted } from '@/lib/db';
-import { formatToE164 } from '@/lib/records';
+import { placeOutboundCall } from '@/lib/place-call';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,71 +8,22 @@ export async function POST(request: Request) {
     const body = await request.json();
     const { patientId, phoneNumber, patientName, appointmentTime } = body;
 
-    if (!phoneNumber) {
-      return NextResponse.json({ success: false, error: 'Phone number is required' }, { status: 400 });
-    }
-
-    const formattedPhone = formatToE164(phoneNumber);
-    const vapiApiKey = process.env.VAPI_API_KEY;
-    const vapiPhoneNumberId = process.env.VAPI_PHONE_NUMBER_ID;
-
-    if (!vapiApiKey || !vapiPhoneNumberId) {
-      return NextResponse.json(
-        { success: false, error: 'VAPI_API_KEY or VAPI_PHONE_NUMBER_ID missing in env' },
-        { status: 500 }
-      );
-    }
-
-    const response = await fetch('https://api.vapi.ai/call/phone', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${vapiApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        phoneNumberId: vapiPhoneNumberId,
-        customer: {
-          number: formattedPhone,
-          name: patientName || 'Patient',
-        },
-        assistant: {
-          firstMessage: `Hello ${patientName || 'there'}, this is an automated reminder regarding your appointment scheduled for ${appointmentTime || 'upcoming time'}. Please confirm if you can make it.`,
-          model: {
-            provider: 'openai',
-            model: 'gpt-4o-mini',
-            messages: [
-              {
-                role: 'system',
-                content: 'You are an automated appointment confirmation assistant. Friendly, concise, and helpful.',
-              },
-            ],
-          },
-        },
-      }),
+    const result = await placeOutboundCall({
+      patientId,
+      phoneNumber,
+      patientName: patientName || 'Patient',
+      appointmentTime: appointmentTime || 'upcoming time',
     });
 
-    const callData = await response.json();
-
-    if (!response.ok) {
-      return NextResponse.json(
-        { success: false, error: callData.message || JSON.stringify(callData) },
-        { status: response.status }
-      );
-    }
-
-    if (patientId) {
-      try {
-        await logCallStarted(String(patientId), callData.id || '', callData.status || 'initiated');
-      } catch (dbErr) {
-        console.error('Failed to log Neon call attempt:', dbErr);
-      }
+    if (!result.ok) {
+      return NextResponse.json({ success: false, error: result.error }, { status: result.httpStatus });
     }
 
     return NextResponse.json({
       success: true,
       message: 'Call initiated successfully',
-      callId: callData.id,
-      status: callData.status,
+      callId: result.callId,
+      status: result.status,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Internal server error';
