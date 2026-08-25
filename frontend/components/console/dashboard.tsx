@@ -253,7 +253,10 @@ export default function Dashboard() {
               <Clock className="mt-0.5 h-4 w-4 text-slate-400" />
               <div>
                 <h2 className="text-sm font-semibold">Daily dispatch</h2>
-                <p className="text-xs text-slate-500">Pacific time. Runs only when enabled.</p>
+                <p className="text-xs text-slate-500">
+                  Pacific time. When enabled and saved, pending calls start around this time
+                  (checked about every 10 minutes).
+                </p>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
