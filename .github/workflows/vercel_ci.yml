@@ -31,12 +31,13 @@ jobs:
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
 
+      # Run from the repo root. The Vercel project Root Directory is already
+      # `frontend`; `cd frontend` made the CLI look for frontend/frontend/package.json.
       - name: Build Project Artifacts
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
-          cd frontend
           vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
           vercel build --token=${{ secrets.VERCEL_TOKEN }}
