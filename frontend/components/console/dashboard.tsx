@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Clock, Phone, PhoneCall, PlayCircle, RefreshCw } from 'lucide-react';
+import { Phone, PhoneCall, PlayCircle, RefreshCw } from 'lucide-react';
 import { Banner } from '@/components/ui/banner';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -62,11 +62,6 @@ export default function Dashboard() {
     null
   );
 
-  const [scheduleEnabled, setScheduleEnabled] = useState(false);
-  const [scheduleTime, setScheduleTime] = useState('10:30');
-  const [schedulePeriod, setSchedulePeriod] = useState('AM');
-  const [syncing, setSyncing] = useState(false);
-
   const showMessage = (type: 'success' | 'error', text: string) => {
     setActionMessage({ type, text });
     window.setTimeout(() => setActionMessage(null), 4000);
@@ -89,55 +84,32 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchData();
-    fetch('/api/settings')
-      .then((r) => r.json())
-      .then((json) => {
-        if (json.success && json.settings) {
-          setScheduleEnabled(json.settings.enabled);
-          setScheduleTime(json.settings.time);
-          setSchedulePeriod(json.settings.period);
-        }
-      })
-      .catch(() => undefined);
-
     const interval = setInterval(fetchData, 3000);
     return () => clearInterval(interval);
   }, [fetchData]);
-
-  useEffect(() => {
-    setInFlight((current) => {
-      const next = { ...current };
-      let changed = false;
-      for (const id of Object.keys(next)) {
-        const attempt = latestAttemptForPatient(callHistory, id);
-        if (!attempt) continue;
-        const status = resolveRosterStatus({
-          calledYet: patients.find((p) => String(p.patient_id) === id)?.called_yet,
-          latestDecision: attempt.decision,
-          latestStatus: attempt.status,
-          inFlight: false,
-        });
-        if (status.key !== 'in_progress' && status.key !== 'pending') {
-          delete next[id];
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-  }, [callHistory, patients]);
 
   const statuses = useMemo(() => {
     const map = new Map<string, StatusDisplay>();
     for (const p of patients) {
       const id = String(p.patient_id);
       const attempt = latestAttemptForPatient(callHistory, id);
+      let optimistic = Boolean(inFlight[id]);
+      if (optimistic && attempt) {
+        const fromServer = resolveRosterStatus({
+          calledYet: p.called_yet,
+          latestDecision: attempt.decision,
+          latestStatus: attempt.status,
+          inFlight: false,
+        });
+        optimistic = fromServer.key === 'in_progress' || fromServer.key === 'pending';
+      }
       map.set(
         id,
         resolveRosterStatus({
           calledYet: p.called_yet,
           latestDecision: attempt?.decision,
           latestStatus: attempt?.status,
-          inFlight: Boolean(inFlight[id]),
+          inFlight: optimistic,
         })
       );
     }
@@ -147,24 +119,6 @@ export default function Dashboard() {
   const pendingPatients = patients.filter((p) => statuses.get(String(p.patient_id))?.allowsRetryCall);
   const inProgressCount = [...statuses.values()].filter((s) => s.key === 'in_progress').length;
   const completedCount = [...statuses.values()].filter((s) => s.isTerminalSuccess).length;
-
-  const handleSaveSettings = async () => {
-    setSyncing(true);
-    try {
-      const res = await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: scheduleEnabled, time: scheduleTime, period: schedulePeriod }),
-      });
-      const json = await res.json();
-      if (json.success) showMessage('success', 'Daily schedule saved.');
-      else showMessage('error', staffErrorMessage(json.error));
-    } catch {
-      showMessage('error', 'Could not save the schedule.');
-    } finally {
-      setSyncing(false);
-    }
-  };
 
   const triggerCall = async (patient: PatientRecord) => {
     const id = String(patient.patient_id);
@@ -245,51 +199,6 @@ export default function Dashboard() {
           <MetricCard label="In progress" value={inProgressCount} />
           <MetricCard label="Completed" value={completedCount} hint="Confirmed or reschedule" />
           <MetricCard label="Roster" value={patients.length} />
-        </section>
-
-        <section className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div className="flex items-start gap-2">
-              <Clock className="mt-0.5 h-4 w-4 text-slate-400" />
-              <div>
-                <h2 className="text-sm font-semibold">Daily dispatch</h2>
-                <p className="text-xs text-slate-500">
-                  Pacific time. When enabled and saved, pending calls start around this time
-                  (checked about every 10 minutes).
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="flex items-center gap-2 text-sm text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={scheduleEnabled}
-                  onChange={(e) => setScheduleEnabled(e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300"
-                />
-                Enabled
-              </label>
-              <input
-                type="text"
-                value={scheduleTime}
-                onChange={(e) => setScheduleTime(e.target.value)}
-                aria-label="Schedule time"
-                className="h-9 w-24 rounded-lg border border-slate-200 px-2.5 text-sm tabular-nums"
-              />
-              <select
-                value={schedulePeriod}
-                onChange={(e) => setSchedulePeriod(e.target.value)}
-                aria-label="AM or PM"
-                className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-sm"
-              >
-                <option value="AM">AM</option>
-                <option value="PM">PM</option>
-              </select>
-              <Button variant="secondary" size="sm" disabled={syncing} onClick={handleSaveSettings}>
-                {syncing ? 'Saving…' : 'Save'}
-              </Button>
-            </div>
-          </div>
         </section>
 
         <div className="flex items-center justify-between border-b border-slate-200">

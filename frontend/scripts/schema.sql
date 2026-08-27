@@ -27,9 +27,3 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-
-INSERT INTO settings (key, value) VALUES ('schedule_enabled', '1')
-ON CONFLICT (key) DO NOTHING;
-
-INSERT INTO settings (key, value) VALUES ('scheduled_call_time', '01:00 PM PST')
-ON CONFLICT (key) DO NOTHING;
