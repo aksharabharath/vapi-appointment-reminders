@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test lib/records.test.ts",
+    "test": "tsx --test lib/records.test.ts lib/staff-session.test.ts",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed-from-sqlite.ts"
   },

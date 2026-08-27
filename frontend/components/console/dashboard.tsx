@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Phone, PhoneCall, PlayCircle, RefreshCw } from 'lucide-react';
 import { Banner } from '@/components/ui/banner';
 import { Button } from '@/components/ui/button';
@@ -51,6 +52,7 @@ async function startCall(patient: PatientRecord) {
 }
 
 export default function Dashboard() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<'roster' | 'audit'>('roster');
   const [patients, setPatients] = useState<PatientRecord[]>([]);
   const [callHistory, setCallHistory] = useState<CallAttemptRecord[]>([]);
@@ -180,7 +182,8 @@ export default function Dashboard() {
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center gap-3 px-6 py-3.5">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-6 py-3.5">
+          <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-white">
             <PhoneCall className="h-4 w-4" />
           </div>
@@ -188,6 +191,18 @@ export default function Dashboard() {
             <h1 className="text-[15px] font-semibold tracking-tight">Appointment Assistant</h1>
             <p className="text-xs text-slate-500">Outbound reminder console</p>
           </div>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={async () => {
+              await fetch('/api/auth/logout', { method: 'POST' });
+              router.push('/login');
+              router.refresh();
+            }}
+          >
+            Sign out
+          </Button>
         </div>
       </header>
 
